@@ -100,6 +100,8 @@ ipython_config.py
 #   commonly ignored for libraries.
 #   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
 #poetry.lock
+#   poetry.toml is a local config file; omit if you want in-project venv settings shared with the team
+#poetry.toml
 
 # pdm
 #   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
@@ -159,6 +161,11 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# macOS
+.DS_Store
+
+# pixi environments (re-created from pixi.lock)
+.pixi/
 
 # secrets
 #secrets/*

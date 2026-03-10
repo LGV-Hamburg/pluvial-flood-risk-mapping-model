@@ -1,6 +1,6 @@
 ARG $MAMBA_USER=mambauser
 
-FROM python:3.12-bookworm as base
+FROM python:3.14-bookworm as base
 
 ENV CACHE_DIR=/app/cache
 
@@ -24,14 +24,14 @@ RUN touch README.md \
     && poetry build \
     && /app/.venv/bin/python -m pip install dist/*.whl --no-deps
 
-FROM python:3.12-slim-bookworm as runtime
+FROM python:3.14-slim-bookworm as runtime
 
 ARG USER_UID=1000
 ARG USERNAME=pythonuser
 ARG USER_GID=2000
 ARG SOURCE_COMMIT
 
-LABEL maintainer="Urban Data Analytics" name="analytics/mobilitatsmonitor_dashboard" source_commit=$SOURCE_COMMIT
+LABEL maintainer="Stefan Schuhart" name="analytics/pluvial-flood-risk" source_commit=$SOURCE_COMMIT
 
 # add user and group
 RUN groupadd --gid $USER_GID $USERNAME && \

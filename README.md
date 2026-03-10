@@ -1,138 +1,227 @@
-# Anwendung des Templates
+# {{ project_name }}
 
-Das Vorgehen unterscheidet sich von dem normalen git clone Vorgehen.
-1. Es wird der Zielordner angelegt. Hierin wird das neue Projekt erzeugt.
-2. Da wir in VS Code entwickeln, sollte man die installierten Extensions prüfen. Zu installieren sind:
-    + black formatter
-    + isort
-    + python with pylance
-    + ruff
-3. Folgender Befehl soll im Terminal ausgeführt werden: 
-    ```bash
-    copier copy git+https://USERNAME@bitbucket.org/geowerkstatt-hamburg/python_project_template PROJKT_ORDNER --trust
-    ```
-4. Im folgenden Interviewleitfaden können die Einstellungen für das Projekt vorgenommen werden.
-5. Update eines vorhandenen Projekts im vorhandenen Projektordner, mit:
-    ```bash
-    copier update . --trust
-    ```
+{{ project_description }}
 
-Beispiele für Updates sind bspw. die Änderung der Python-Version.
+---
 
-## sharing data between git-project and "G://" under Windows
-### sharing Network folder from VSCode-Server with personal PCs
+## Prerequisites
 
-- klick "Netzwerkadresse hinzufügen"
+Depending on the package manager chosen when the project was scaffolded, install
+the corresponding tool **once** on your machine before proceeding.
 
-![network](img/Anmerkung-2023-09-11-141117.png)
+| Package manager | Install |
+|---|---|
+| **pixi** *(default)* | `curl -fsSL https://pixi.sh/install.sh \| bash` — [pixi.sh](https://pixi.sh) |
+| **poetry** | `pipx install poetry` — [python-poetry.org](https://python-poetry.org) |
+| **mamba** | [Miniforge](https://github.com/conda-forge/miniforge) |
 
-- folgende URL eingeben: `\\gv-srv-w00176.fhhnet.stadt.hamburg.de\Shared$`
+For Docker workflows you also need [Docker](https://docs.docker.com/get-docker/).
 
-![url](img/Anmerkung-2023-09-11-141439.png)
+---
 
-## Daten vom Ordner auf der jeweiligen Maschine in den Shared$/Projektordner überführen
+## Development setup
 
-Vorgehen:
-* rechter Mausklick auf die jeweilige Datei ... Download auswählen
-* Zielordner auswählen ... bestätigen
-* Dateiendungen prüfen
+### pixi
 
-Falls mehrere Dateien heruntergeladen werden sollen, kann es hilfreich sein, vorher die Dateien zu zippen
-
-    ```bash
-    Beispiel für das Zippen
-    zip zieldateiname zu_zippende_dateien, z.B. zip data/month_2_3_4_5.zip  data/*.xlsx
-    ```
-## Hinweise für die Installation und Nutzung
-
-### Vorinstallierte Ordner und Dateien
-
-**Ordner**:
-- `assets`: für Abbildungen, Tabellen
-- `data`: für lokal hinterlegte Daten
-- `reports`: für Dokumentationen
-- `examples`: Ordner für einfache Beispiele
-- `scratch`: Hier kann man kleine Codesnippets ausprobieren und testen.
-- `secrets`: für das Speichern von Passwörten und Zugängen als bspw. Textdateien
-- `scripts`
-- `src`: für das Package
--`.vscode`: hier ist die settings.json hinterlegt mit den verwendeten Lintern und Grundformatierungen (black, isort)
-
-**weitere Dateien**:
-- zur Erstellung von Dockerimages:
-    * `Makefile`
-    * `Dockerfile`: zur Definition des Images
-    * `docker-compose-build.yaml` : für die automatisierte Erstellung des Images aus dem Dockerfile
-    * `docker-compose-dev.yaml`: für den lokalen Test des Images
-    * `docker-compose.yaml`: für den produktiven Dienst
-- für die virtuelle Environment/Umgebung:
-    * `environmental.yaml`: diese muss mit dem entsprechenden Befehl initialisiert werden
-- `.env.example`: Beispieldatei für die Umgebungsvariablen; Sie beziehen sich auf das Programmierte als auch auf den build-Prozess für das Dockerimage.
-- `.gitignore`: alles, was nicht in git synchronisiert werden soll. Hierzu zählt u.a. der assets-Ordner, da hier auch größere Dateien erzeugt werden können. Die Dateien werden in einen separten Prozess auf den Jumpserver geladen und mit den entsprechenden Gruppenlaufwerken synchronisiert.
-- `.dockerignore`: nur für den Imageerstellungsprozess relevante Daten werden hier verwendet.
-- `pyproject.toml`: alle specs enthalten; build-backend
-
-## Umgang mit den vorgegebenen Konzepten
-### virtual environemtns / dependencies:
-    * `mamba` zum managengen von venvs und zum installieren von Paketen, v.a. für data science
-    * `poetry` zum installieren von paketen und Projekt-Abhängigkeiten
-
-Create an ` environemt.yml` with minimal dependencies
-
-```yaml
-name: python_project_template
-channels:
-  - conda-forge
-dependencies:
-  - python=3.11
-  - poetry
-
-```
+Pixi manages Python, all conda-forge and PyPI dependencies, and the virtual environment in a
+single tool. The environment lives at `.pixi/envs/` and is **not** committed to git.
 
 ```bash
-mamba create -p ./.venv python=3.11
+# Install all dependencies (creates the environment from pixi.lock)
+pixi install
+
+# Open a shell with dev tools available
+pixi shell -e dev
+
+# Or run a single task without activating the shell
+pixi run -e dev test
+pixi run -e dev lint
+pixi run -e dev format
+pixi run -e dev typecheck
 ```
 
+Add a new dependency:
+
 ```bash
-conda activate .venv/
+pixi add numpy                     # conda-forge, runtime
+pixi add --pypi requests           # PyPI, runtime
+pixi add --feature dev pytest-mock # dev-only
 ```
 
+Update all dependencies and regenerate the lockfile:
+
 ```bash
-mamba env update --prefix ./.venv --file environment.yml  --prune
+pixi update
+git add pixi.lock && git commit -m 'chore: update pixi lockfile'
 ```
 
-#### How To use poetry to install dependencies
+---
 
-Add a package to your depdendency list (updates pyproject.toml) and install it in your environment
-```bash
-# add a dependency and install it, with
-poetry add PACKAGE
-```
+### poetry
+
+Poetry manages PyPI dependencies and creates `.venv/` inside the project root
+(configured in `poetry.toml`). Python itself comes from your system, `pyenv`, or a
+conda base environment — it must **not** be installed inside the project venv.
 
 ```bash
-# install your package in editable mode, into your environment
+# One-time: install poetry globally, isolated from any project
+pipx install poetry
+
+# Inside the project folder — creates .venv/ and installs all deps
 poetry install
+
+# Activate the venv for an interactive session
+poetry shell
+
+# Or prefix individual commands
+poetry run pytest tests/
 ```
 
-### Anmerkung für die Anwendung von docker:
-    * docker images sind, zur Zeit, die Zielumgebung für fertiggestellte Anwendungen
-    * Ziele für den build-Vorgang:
-        - möglichst schneller build prozess
-        - möglichst kleine images, um deployment nicht unnötig zu verlangsamen
-        - hoher (Teil)Automatisierungsgrad
-        - Abstraktion der docker-spezifischen Befehle durch Nutzung von makefiles
-    * Dev-Container bieten Potentiale für transportable Dev-Umgebungen, die auf allen unseren Entwicklungsmaschinen eingesetzt werden können, ohne
+Add a new dependency:
 
+```bash
+poetry add numpy                      # runtime → updates pyproject.toml + poetry.lock
+poetry add --group dev pytest-mock    # dev-only
+```
 
-### Anmerkungen für die Codedokumentation
+Update dependencies:
 
-TODO Andreas:     
-    * ich schlage vor wir benutzen Jupyterbook für die Doku
-    * funtionierendes setup inclusive API Dokumentation (`autoapi`) hier: https://bitbucket.org/geowerkstatt-hamburg/vhh_e_dispo/src/dev/jbdocs/_config.yml
+```bash
+poetry update            # update all within declared constraints
+poetry update numpy      # update a single package
+git add poetry.lock && git commit -m 'chore: update poetry lockfile'
+```
 
-entsprechende Ordner für jbdocs-Anwendung anlegen
-notwendige Extensions erwähnen
-in Makefile integrieren?
-auf vm veröffentlichen? --> wenn Doku da ist, Prozess anpassen
+---
 
-Abspeicherung: als html, latex, doc und/oder pdf?
+### mamba / conda
+
+Mamba manages both the virtual environment and the packages.
+
+```bash
+# Create a project-local environment
+mamba env create -f environment.yaml -p .venv
+mamba activate .venv/
+
+# Install dev dependencies on top
+mamba env update --prefix .venv --file environment.dev.yaml
+
+# Recreate / update after environment files change
+mamba env update --prefix .venv --file environment.yaml --prune
+```
+
+Add a new dependency: edit `environment.yaml`, then run `mamba env update --prune`.
+
+---
+
+## Common development tasks
+
+All tasks are available via `make`. Run `make` with no arguments to execute
+`lock → build-image → run-local`.
+
+| Command | What it does |
+|---|---|
+| `make test` | Run the test suite |
+| `make lint` | Lint with ruff |
+| `make format` | Auto-format with ruff |
+| `make typecheck` | Type-check with mypy |
+| `make lock` | Update the dependency lockfile |
+| `make build-image` | Build the Docker image |
+| `make push-registry` | Push the image to the container registry |
+| `make run-local` | Start the app locally via docker-compose |
+| `make build-docs` | Build the Jupyter Book documentation |
+| `make clean-docs` | Remove the documentation build output |
+
+---
+
+## Pre-commit hooks
+
+Code quality checks run automatically on every `git commit`. Install the hooks once after cloning:
+
+```bash
+pre-commit install
+```
+
+Run all hooks manually at any time:
+
+```bash
+pre-commit run --all-files
+```
+
+The hooks cover: **ruff** (lint + auto-fix), **ruff-format**, **mypy**, and standard
+file hygiene (trailing whitespace, YAML validity, merge-conflict markers, large files).
+
+---
+
+## Docker
+
+Copy `.env.example` to `.env` and fill in the values (copier does this automatically on
+first scaffold):
+
+```bash
+cp .env.example .env
+```
+
+| Command | What it does |
+|---|---|
+| `make build-image` | Builds `${CONTAINER_REGISTRY}/analytics/${IMAGE_NAME}:${IMAGE_TAG}` |
+| `make run-local` | Runs the image via `docker-compose-dev.yaml` |
+| `make push-registry` | Pushes to the container registry |
+
+Key Docker files:
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Multi-stage build (adapts to the chosen package manager) |
+| `docker-compose-build.yaml` | CI/CD image build |
+| `docker-compose-dev.yaml` | Local dev/test run with secrets and env vars |
+| `docker-compose.yaml` | Production deployment spec |
+
+---
+
+## Project structure
+
+```
+├── src/{{ python_package_import_name }}/   # importable package
+├── tests/                                   # pytest test suite
+├── docs/                                    # Jupyter Book documentation
+{% if is_datascience_project -%}
+├── data/
+│   ├── raw/                                 # original, immutable source data
+│   ├── interim/                             # intermediate transformed data
+│   ├── processed/                           # final, analysis-ready data
+│   └── external/                            # data from third-party sources
+{% endif -%}
+├── assets/                                  # images, figures
+├── reports/                                 # generated reports and outputs
+├── examples/                                # usage examples
+├── scratch/                                 # throwaway experiments (not tested)
+└── secrets/                                 # local credentials — never committed
+```
+
+---
+
+## VS Code setup
+
+Recommended extensions (install via the Extensions panel or `.vscode/extensions.json`):
+
+| Extension | Purpose |
+|---|---|
+| `ms-python.python` + `ms-python.pylance` | Python language support |
+| `charliermarsh.ruff` | Linting and formatting (replaces black + isort) |
+| `ms-python.mypy-type-checker` | Type checking |
+
+Formatting on save and import sorting are pre-configured in `.vscode/settings.json`.
+
+---
+
+## Updating the template
+
+To pull in improvements from the project template into this project:
+
+```bash
+copier update . --trust
+```
+
+Copier merges template changes with your local edits. Review the diff carefully before committing.
+

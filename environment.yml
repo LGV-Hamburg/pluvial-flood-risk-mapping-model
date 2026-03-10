@@ -1,6 +1,6 @@
+
 name: pluvial-flood-risk
 channels:
   - conda-forge
 dependencies:
-  - python=3.12
-  - poetry
+  - python=3.14

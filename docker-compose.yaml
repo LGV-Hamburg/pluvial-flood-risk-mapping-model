@@ -4,11 +4,11 @@ secrets:
 
 services:
   app:
-    image: lgvudh.azurecr.io/analytics/
+    image: ${CONTAINER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
     secrets:
       - MY_SECRET1
-    restart: "unless_stopped"
+    restart: "unless-stopped"
     environment:
-      MY_ENV_VAR1: example
+      MY_ENV_VAR1: ${MY_ENV_VAR1}
     ports:
-      - 12345:12345
+      - ${WEBAPP_PORT_CONTAINER}:${WEBAPP_PORT}

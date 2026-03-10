@@ -12,27 +12,35 @@ GIT_COMMIT := $(shell git rev-parse --short HEAD)
 all: lock build-image run-local
 
 lock:
-	@echo 'Creating poetry lockfile'
+@echo 'Creating poetry lockfile'
 	poetry lock
 
+
 build-image:
-	@echo 'Building release ${CONTAINER_REGISTRY}/analytics/$(IMAGE_NAME):$(IMAGE_TAG)'
-# build your image
+	@echo 'Building release ${CONTAINER_REGISTRY}/$(IMAGE_NAME):$(IMAGE_TAG)'
 	docker compose -f docker-compose-build.yaml build --build-arg SOURCE_COMMIT=$(GIT_COMMIT) app
 
 push-registry:
-# login into our azure registry
-	az acr login -n lgvudh
-# push image to the registry
-	docker push  ${CONTAINER_REGISTRY}/analytics/$(IMAGE_NAME):$(IMAGE_TAG)
+	az acr login --name $(shell echo $(CONTAINER_REGISTRY) | cut -d. -f1)
+	docker push ${CONTAINER_REGISTRY}/$(IMAGE_NAME):$(IMAGE_TAG)
 
 run-local:
-# run container in foreground
 	docker compose -f docker-compose-dev.yaml up
+
+test:
+	poetry run pytest tests/
+
+lint:
+	poetry run ruff check src/
+
+format:
+	poetry run ruff format src/
+
+typecheck:
+	poetry run mypy src/
 
 build-docs:
 	jupyter-book build docs
 
 clean-docs:
 	jupyter-book clean docs
-

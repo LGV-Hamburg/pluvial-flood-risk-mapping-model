@@ -1,4 +1,4 @@
-# Confuration for docker compose
+# Configuration for docker compose
 
 A convenient method to setup the application is via `docker-compose`.
 
