@@ -60,3 +60,18 @@ with arcpy.da.UpdateCursor(table, new_field) as cursor:
     for row in cursor:
         cursor.updateRow((mobility[j],))
         j += 1
+
+# Example usage:
+# calculate_mobility_hazard(
+#     input_path='Building_ExampleLayer.csv',
+#     area_5m='F30A5m',
+#     per_5m='F30P5m',
+#     area_15m='F30A15m',
+#     per_15m='F30P15m',
+#     area_30m='F30A30m',
+#     per_30m='F30P30m',
+#     new_field='MobilityHazard',
+#     minarea=10,
+#     shape=0.5,
+#     output_path='Building_ExampleLayer_with_mobility.csv'
+# )

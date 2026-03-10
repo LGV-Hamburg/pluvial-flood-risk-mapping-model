@@ -39,3 +39,10 @@ for _ in range(n_iterations):
 
 # Output the calculated means as a message
 arcpy.AddMessage(f"Calculated Means: {means}")
+
+# Example usage:
+# calculate_classes_for_visualization(
+#     input_path='Building_ExampleLayer.csv',
+#     field='Risk',
+#     n_iterations=5
+# )

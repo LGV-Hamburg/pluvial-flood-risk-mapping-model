@@ -28,3 +28,16 @@ with arcpy.da.UpdateCursor(
         row[3] = product  # Assign the product to the new field
  
         cursor.updateRow(row)
+
+# Example usage:
+# risk_calculation(
+#     input_path='Building_ExampleLayer.csv',
+#     field_1='Hazard',
+#     field_2='Exposure',
+#     field_3='Vulnerability',
+#     weight_1=0.5,
+#     weight_2=0.3,
+#     weight_3=0.2,
+#     new_field='Risk',
+#     output_path='Building_ExampleLayer_with_risk.csv'
+# )

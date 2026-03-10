@@ -24,3 +24,13 @@ with arcpy.da.UpdateCursor(table, [svi_field, output_name]) as cursor:
         if row[0] is not None:
             row[1] = (row[0] + Thresshold * svi_mean) ** Trans_Form  # (SVI + mean(SVI)/4)²
             cursor.updateRow(row)
+
+
+
+# Execution command
+# python 1_Step4_Flood_succeptibility_transformation.py \
+# --input Building_ExampleLayer.CSV \
+# --svi_field SV \
+# --output SV_PF \
+# --threshold 0.25 \
+# --transform 2

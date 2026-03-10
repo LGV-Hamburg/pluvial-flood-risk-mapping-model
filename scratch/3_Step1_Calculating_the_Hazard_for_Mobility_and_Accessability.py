@@ -95,3 +95,7 @@ if __name__ == '__main__':
     # Global Environment settings
     with arcpy.EnvManager(scratchWorkspace="C:\\Users\\Anastasia\\AppData\\Local\\Temp\\ArcGISProTemp35020\\Untitled\\Default.gdb", workspace="C:\\Users\\Anastasia\\AppData\\Local\\Temp\\ArcGISProTemp35020\\Untitled\\Default.gdb"):
         HazardMobilityandAccessabilityCalculation1(*argv[1:])
+
+
+# Execution Command
+#python 3_Step1_Calculating_the_Hazard_for_Mobility_and_Accessability.py

@@ -58,3 +58,13 @@ if __name__ == '__main__':
     # Global Environment settings
     with arcpy.EnvManager(scratchWorkspace="C:\\Users\\Anastasia\\AppData\\Local\\Temp\\ArcGISProTemp35020\\Untitled\\Default.gdb", workspace="C:\\Users\\Anastasia\\AppData\\Local\\Temp\\ArcGISProTemp35020\\Untitled\\Default.gdb"):
         Step1CalculatingHazardWellBeing(*argv[1:])
+
+# Example usage:
+# step1_calculating_hazard_wellbeing(
+#     building_path="Building_input_layer.shp",
+#     flood_folder="FloodShapefiles",
+#     flood_pattern="Flood_*.shp",
+#     id_field="ID",
+#     buffer_distance=2,
+#     output_path="Building_with_hazard.gpkg"
+# )

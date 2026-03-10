@@ -118,3 +118,6 @@ with arcpy.da.UpdateCursor(table, new_field) as cursor:
 
 # Set the output parameter for ModelBuilder
 #arcpy.SetParameterAsText(5, output_fc)
+
+# Execution command
+# python 1_Step1_Calculating_the_Sensitivity_using_TOPSIS.py --input Building_ExampleLayer.CSV --fields ES C --weights 0.7 0.3 --output Sen --entropy true

@@ -118,3 +118,12 @@ with arcpy.da.UpdateCursor(table, new_field) as cursor:
 
 # Set the output parameter for ModelBuilder
 #arcpy.SetParameterAsText(5, output_fc)
+
+
+# Execution command
+# python 1_Step3_Calculating_the_SVI_using_TOPSIS.py \
+# --input Building_ExampleLayer.CSV \
+# --fields CCAP Sen \
+# --weights 0.5 0.5 \
+# --output SV \
+# --entropy true

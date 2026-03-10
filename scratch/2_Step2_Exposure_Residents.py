@@ -73,3 +73,8 @@ if __name__ == '__main__':
     # Global Environment settings
     with arcpy.EnvManager(scratchWorkspace="C:\\Users\\Anastasia\\AppData\\Local\\Temp\\ArcGISProTemp35020\\Untitled\\Default.gdb", workspace="C:\\Users\\Anastasia\\AppData\\Local\\Temp\\ArcGISProTemp35020\\Untitled\\Default.gdb"):
         ExposureCalculation(*argv[1:])
+
+# Execution command
+# python 2_Step2_Exposure_Residents.py \
+# --input Building_ExampleLayer.CSV \
+# --lookup StatisticalExampleUnit.CSV

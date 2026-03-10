@@ -48,3 +48,14 @@ if params:  # Only run if there are fields selected
 with arcpy.da.UpdateCursor(table, [new_field]) as cursor:
     for j, row in enumerate(cursor):
         cursor.updateRow((health[j],))
+# Example usage:
+# calculate_health_hazard(
+#     input_path='Building_ExampleLayer.csv',
+#     percent_fields=[
+#         'P2Flood_20cm', 'P2Flood_30cm', 'P2Flood_40cm', 'P2Flood_50cm',
+#         'P2Flood_60cm', 'P2Flood_70cm', 'P2Flood_80cm', 'P2Flood_90cm', 'P2Flood_100cm'
+#     ],
+#     new_field='HealthHazard',
+#     shape=0.5,
+#     output_path='Building_ExampleLayer_with_health.csv'
+# )
