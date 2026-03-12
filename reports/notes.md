@@ -426,11 +426,99 @@ Sequenzielle Ausführung:
 
 ---
 
-## Phase 6 — Tests
+## Phase 6 — Tests (TDD-Ansatz)
 
-- Unit-Tests je Algorithmus-Modul gegen Referenzwerte aus `data/example/Building_ExampleLayer.csv`
-- Integrationstest: vollständiger `run_pipeline()`-Durchlauf mit Beispieldaten
-- Prozess-Test: synthetischer GeoJSON-Input, Prüfung Output-Struktur
+Eingangsdaten kommen in Produktion von einer OGC API Processes-Schnittstelle. Tests sollen die Business-Logik unabhängig davon verifizieren können.
+
+### Testpyramide
+
+**Unit-Tests — Kernlogik (TDD):** `tests/algorithms/`
+- Funktionen auf Numpy-/Pandas-Ebene ohne räumliche Abhängigkeiten
+- Referenzwerte direkt aus den Paper-Gleichungen oder aus `Building_ExampleLayer.csv` berechnet
+- Werden **vor** der Implementierung geschrieben (TDD)
+- Beispiele:
+  - `test_topsis_closeness_coefficients()` — Eq. 5 gegen manuell berechnete Werte
+  - `test_entropy_homogeneous_input_returns_1()` — Grenzfall: alle Attribute gleich → U=1
+  - `test_flood_sensitivity_transform_prevents_zero_risk()` — SV=0 → SV_PF > 0
+  - `test_lognorm_hazard_wb_summation()` — Eq. 12 gegen scipy-Referenz
+  - `test_iterative_mean_breaks_known_values()` — bekannte Eingabe, bekannte Grenzen
+  - `test_risk_product_exponents()` — Eq. 14/15 gegen manuelles Potenzprodukt
+
+**Unit-Tests — Räumliche Vorverarbeitung:** `tests/algorithms/` (synthetische Geometrien)
+- In-Memory-GeoDataFrames mit einfachen Rechtecken (Gebäude, Straßen, Flood-Polygone)
+- Prüft korrekte Buffer-Abstände, Overlay-Logik, Anteilsberechnung
+- Kein TDD nötig, aber Smoke-Tests für Regressionssicherheit
+
+**Integrationstests:** `tests/test_pipeline.py`
+- Vollständiger `run_pipeline()`-Durchlauf mit `data/example/Building_ExampleLayer.csv`
+- Prüft: alle erwarteten Ausgabespalten vorhanden, keine NaN in Pflichtspalten, Wertebereiche [0, 1] für Indices
+
+**Prozess-Tests:** `tests/test_process.py`
+- Synthetisches minimales GeoJSON-Input-Objekt
+- Prüft Output-Struktur (GeoJSON FeatureCollection, Pflicht-Properties vorhanden)
+- Kein Inhalt geprüft (das erledigen Unit-Tests)
+
+### Fixtures (`tests/conftest.py`)
+- `sample_buildings_gdf` — GeoDataFrame aus `Building_ExampleLayer.csv`
+- `minimal_buildings_gdf` — 3-Gebäude-GDF für schnelle Unit-Tests
+- `default_pipeline_params` — `PipelineParams` mit Paper-Defaults
+
+---
+
+## Architekturentscheidung: Kein volles Hexagonal-Muster
+
+**Fazit: Nicht empfehlenswert** für diese Codebase — aber die Kernidee des Musters wird selektiv angewendet.
+
+**Warum nicht vollständiges Hexagonal/Clean Architecture:**
+- Zu wenige Module (~8 in `algorithms/` + 1 Pipeline + 1 Prozess) — kein Nutzen für abstrakte Ports
+- Kein DB-Layer, kein zweites Interface, kein Bedarf für Dependency Injection
+- Abstrakte Interfaces würden Boilerplate ohne konkreten Mehrwert erzeugen
+
+**Was trotzdem umgesetzt wird (Kernprinzip selektiv):**
+
+Die Codebase gliedert sich in drei natürliche Schichten, die durch Konvention — nicht durch abstrakte Klassen — getrennt bleiben:
+
+| Schicht | Inhalt | Abhängigkeiten | Testbarkeit |
+|---------|--------|----------------|-------------|
+| **Kernlogik** | TOPSIS, Entropy, lognorm-CDF, Risikoprodukt, Mean-Breaks | nur `numpy`/`scipy` | trivial per TDD — `np.ndarray` rein, Skalar/Array raus |
+| **Räumliche Vorverarbeitung** | Buffer, Overlay, Tabulate Intersection | `geopandas`/`shapely` | synthetische In-Memory-GeoDataFrames |
+| **OGC-Adapter** | GeoJSON↔GDF, Prozessregistrierung | `fastprocesses` | dünner Adapter, kaum eigene Logik |
+
+**Konvention:** Kernlogik-Funktionen (z. B. `calculate_topsis`, `hazard_wb_from_percentages`) nehmen **keine GeoDataFrames** als Argumente — ausschließlich `np.ndarray`, `pd.Series` oder skalare Werte. Spatial-Funktionen rufen die Kernlogik auf, nicht umgekehrt. Die OGC-Prozessklasse ruft ausschließlich die Pipeline auf, enthält selbst keine Berechnungslogik.
+
+Das gibt 80 % der Testbarkeitsvorteile von Hexagonal ohne den Overhead.
+
+---
+
+## Code-Qualitäts-Richtlinien
+
+### Lesbarkeit & numpy/pandas-Stil
+- **Keine Python-Loops über Zeilen**, wo numpy-Vektoroperationen verfügbar sind (z. B. `np.sqrt(np.sum(..., axis=1))` statt `for i in range(m)`)
+- **Keine interleaved Index-Arithmetik** (z. B. `D[2*i]` / `D[2*i+1]`): semantisch verschiedene Größen bekommen eigene benannte Arrays/Variablen
+- **`np.where`** statt `if/else` innerhalb von Schleifen für elementweise Bedingungen
+- Zwischenergebnisse als benannte Variablen statt verschachtelter Ausdrücke
+
+### Performanz (Low Hanging Fruits)
+- Alle Schleifen über Zeilen/Spalten der Datenmatrix durch vektorisierte numpy-Operationen ersetzen
+- Keine redundante Berechnung von `max`, `min`, `sum` mehrfach über dieselbe Spalte
+- Räumliche Operationen (Buffer, Overlay): `geopandas` intern bereits auf `shapely` vektorisiert — keine manuellen Schleifen über Geometrien
+
+### Formel-Angleichung ans Paper
+- Jede Kernberechnung erhält einen Kommentar mit Gleichungsnummer aus Vogelbacher et al. (2025), z. B.:
+  ```python
+  # Eq. 4 — Normierung der Attributmatrix
+  normalized = data / np.sqrt(np.sum(data**2, axis=0))
+
+  # Eq. 5 — Euklidischer Abstand zur positiven/negativen Ideallösung
+  distance_to_best = np.sqrt(np.sum((weighted_normalized - ideal_best) ** 2, axis=1))
+  distance_to_worst = np.sqrt(np.sum((weighted_normalized - ideal_worst) ** 2, axis=1))
+
+  # Eq. 5 — TOPSIS Closeness-Koeffizient C ∈ [0, 1]
+  total_distance = distance_to_best + distance_to_worst
+  closeness = np.where(total_distance > 0, distance_to_worst / total_distance, 0.0)
+  ```
+- Variablennamen entsprechen soweit möglich den Symbolen im Paper (z. B. `distance_to_best` für $D^+$, `closeness` für $C_i$)
+- Abweichungen vom Paper (z. B. Entropy-Multiplikation, Threshold-Addition) werden kommentiert mit Begründung
 
 ---
 
@@ -438,5 +526,6 @@ Sequenzielle Ausführung:
 
 - **Ein OGC-Prozess** für die gesamte Pipeline (kein separater Prozess je Modul)
 - GeoJSON↔GDF-Konvertierung ausschließlich in `processes/`; Algorithmen arbeiten intern immer auf GeoDataFrames
+- Kernlogik-Funktionen haben keine räumlichen Abhängigkeiten → direkt per TDD entwickeln
 - Optionales Feldnamen-Mapping als Prozess-Input für abweichende Quell-Feldnamen (TODO: ausdetaillieren)
 - **Außerhalb des Scope:** Hydrologische Simulation, Datenbankanbindung, Frontend
