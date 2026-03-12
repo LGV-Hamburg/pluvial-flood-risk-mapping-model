@@ -389,29 +389,38 @@ arcpy-Ersetzungsmatrix:
 
 ---
 
-## Phase 4 — Pipeline-Orchestrierung (`pipeline.py`)
+## Phase 4 — Sub-Pipelines (`pipeline.py`)
 
-`run_pipeline(buildings_gdf, streets_gdf, flood_layers_wb, flood_layers_ma, params: PipelineParams) -> GeoDataFrame`
+Die vier unabhängigen Berechnungsäste werden als eigenständige Funktionen implementiert, die jeweils ein GeoDataFrame mit den neu berechneten Spalten zurückgeben:
 
-Sequenzielle Ausführung:
-1. Pydantic-Validierung
-2. `calculate_sensitivity()`
-3. `calculate_coping_capacity()`
-4. `calculate_svi()`
-5. `apply_flood_sensitivity_transform()`
-6. `calculate_exposure()`
-7. `compute_flood_intersection_wb()` → `calculate_hazard_wb()`
-8. `compute_flood_intersection_ma()` → `calculate_hazard_ma()`
-9. `calculate_risk()`
-10. `classify_risk()` (für WB und MA)
+- `run_vulnerability_pipeline(buildings_gdf, params) -> GeoDataFrame` — Steps 1.1–1.4
+- `run_exposure_pipeline(buildings_gdf) -> GeoDataFrame` — Step 2
+- `run_hazard_wb_pipeline(buildings_gdf, flood_layers_wb, params) -> GeoDataFrame` — Steps 4.1–4.2
+- `run_hazard_ma_pipeline(buildings_gdf, streets_gdf, flood_layers_ma, params) -> GeoDataFrame` — Steps 3.1–3.2
+
+Dazu eine Merge-Funktion:
+- `merge_and_finalize(partial_results, buildings_gdf, params) -> GeoDataFrame` — führt die Teilergebnisse zusammen, berechnet Risk (Eq. 14/15) und Klassifizierung
+
+Diese Funktionen haben keine Kenntnis von Celery oder OGC — sie sind direkt unit- und integrierbar testbar.
 
 ---
 
 ## Phase 5 — OGC API Processes (`processes/flood_risk_process.py`)
 
-`PluvialFloodRiskProcess(BaseProcess)` mit `@register_process("pluvial_flood_risk")`
+**Parallelisierungsstrategie: Operation Fan-out (`BaseScatterProcess`)**
 
-**Inputs:**
+Die vier Berechnungsäste sind voneinander unabhängig und arbeiten auf demselben Input — das entspricht exakt dem Scatter-Gather-Muster von `BaseScatterProcess`. Jeder `@parallel_step` läuft auf einem eigenen Celery-Worker.
+
+```
+@parallel_step vulnerability_pipeline  ─┐
+@parallel_step exposure_pipeline        ┤
+@parallel_step hazard_wb_pipeline       ┤  → merge_results → Risk + Classification
+@parallel_step hazard_ma_pipeline      ─┘
+```
+
+`PluvialFloodRiskProcess(BaseScatterProcess)` mit `@register_process("pluvial_flood_risk")`
+
+**Inputs** (in `ProcessDescription`):
 - `buildings` — GeoJSON FeatureCollection (`application/geo+json`)
 - `streets` — GeoJSON FeatureCollection
 - `flood_layers_wb` — Array von GeoJSON-Objekten (je Tiefenstufe 20–100 cm)
@@ -422,7 +431,34 @@ Sequenzielle Ausführung:
 - `risk_features` — GeoJSON FeatureCollection mit allen berechneten Spalten
 - `classification_breaks_wb` / `classification_breaks_ma` — Arrays von Klassengrenzen
 
-`execute()`: GeoJSON → GDF → Pydantic-Validierung → `run_pipeline()` → GeoJSON; Fortschritt via `job_progress_callback`
+**Implementierungsstruktur:**
+```python
+@register_process("pluvial_flood_risk")
+class PluvialFloodRiskProcess(BaseScatterProcess):
+
+    @parallel_step
+    def vulnerability_pipeline(self, exec_body: dict) -> dict:
+        # GeoJSON → GDF → run_vulnerability_pipeline() → GDF → JSON-Records
+        ...
+
+    @parallel_step
+    def exposure_pipeline(self, exec_body: dict) -> dict:
+        ...
+
+    @parallel_step
+    def hazard_wb_pipeline(self, exec_body: dict) -> dict:
+        ...
+
+    @parallel_step
+    def hazard_ma_pipeline(self, exec_body: dict) -> dict:
+        ...
+
+    def merge_results(self, results: dict[str, dict]) -> RiskResult:
+        # Teilergebnisse zusammenführen → merge_and_finalize() → GeoJSON
+        ...
+```
+
+Jeder `@parallel_step` deserialisiert das GeoJSON selbst (GeoJSON → GDF), ruft die zugehörige Sub-Pipeline auf und gibt nur die neu berechneten Spalten (als Records-JSON) zurück — nicht das gesamte GeoJSON. `merge_results` fügt alles auf dem Original-GDF zusammen.
 
 ---
 
