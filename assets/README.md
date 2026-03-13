@@ -1,1 +1,0 @@
-This folder should contain all files like images which are part of external reports, like Word documents.
