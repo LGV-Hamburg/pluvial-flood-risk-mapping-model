@@ -99,7 +99,9 @@ def topsis(
     # Step 3 — Closeness coefficient  C_i = D_from_min / (D_from_max + D_from_min)
     # ------------------------------------------------------------------
     denom = d_from_max + d_from_min
-    C = np.where(denom > 0.0, d_from_min / denom, 0.0)
+    # np.divide with out+where avoids evaluating the division at zero-denom
+    # positions, preventing a RuntimeWarning from np.where's eager evaluation.
+    C = np.divide(d_from_min, denom, out=np.zeros_like(d_from_min), where=denom > 0.0)
 
     if not apply_entropy:
         return C
