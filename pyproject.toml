@@ -96,6 +96,9 @@ pytest-xdist = ">=3.5"
 types-toml = ">=0.10"
 pre-commit = ">=4.0"
 
+[tool.pytest.ini_options]
+addopts = "-v"
+
 [tool.poetry.group.docs]
 optional = true
 
