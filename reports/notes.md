@@ -87,9 +87,9 @@ Gesamtformel: **Risiko = Gefährdung^w₁ × Exposition^w₂ × Vulnerabilität^
 
 ---
 
-## Modul 1 – Vulnerabilität (Social Vulnerability Index)
+## Modul 1 – Vulnerabilität (Social Vulnerability Index) ✅
 
-### Step 1.1 – Sensitivity (TOPSIS)
+### Step 1.1 – Sensitivity (TOPSIS) ✅
 _Skript: `1_Step1_Calculating_the_Sensitivity_using_TOPSIS.py`_
 
 #### Inputs
@@ -103,7 +103,7 @@ _Skript: `1_Step1_Calculating_the_Sensitivity_using_TOPSIS.py`_
 
 ---
 
-### Step 1.2 – Coping Capacity (TOPSIS)
+### Step 1.2 – Coping Capacity (TOPSIS) ✅
 _Skript: `1_Step2_Calculating_the_Coping_Capacity_using_TOPSIS.py`_
 
 #### Inputs
@@ -117,7 +117,7 @@ _Skript: `1_Step2_Calculating_the_Coping_Capacity_using_TOPSIS.py`_
 
 ---
 
-### Step 1.3 – Social Vulnerability Index / SVI (TOPSIS)
+### Step 1.3 – Social Vulnerability Index / SVI (TOPSIS) ✅
 _Skript: `1_Step3_Calculating_the_SVI_using_TOPSIS.py`_
 
 #### Inputs
@@ -131,7 +131,7 @@ _Skript: `1_Step3_Calculating_the_SVI_using_TOPSIS.py`_
 
 ---
 
-### Step 1.4 – Flood Susceptibility Transformation
+### Step 1.4 – Flood Susceptibility Transformation ✅
 _Skript: `1_Step4_Flood_succeptibility_transformation.py`_
 
 Nichtlineare Transformation: `SV_PF = (SV + Threshold × mean(SV))^Exponent`
@@ -565,3 +565,80 @@ Das gibt 80 % der Testbarkeitsvorteile von Hexagonal ohne den Overhead.
 - Kernlogik-Funktionen haben keine räumlichen Abhängigkeiten → direkt per TDD entwickeln
 - Optionales Feldnamen-Mapping als Prozess-Input für abweichende Quell-Feldnamen (TODO: ausdetaillieren)
 - **Außerhalb des Scope:** Hydrologische Simulation, Datenbankanbindung, Frontend
+
+---
+
+## Erläuterung: NumPy-Matrixoperationen am Beispiel TOPSIS
+
+Für Einsteiger: Was passiert bei den NumPy-Operationen in `topsis.py` konkret?
+
+### Die Daten als Matrix
+
+Jede Zeile = ein Gebäude, jede Spalte = ein Indikator. `M[i, j]` = Wert von Gebäude `i` für Indikator `j`.
+
+```
+         Kinder (C)  Ältere (ES)
+Gebäude A    1.0        0.0      ← Zeile 0
+Gebäude B    2.0        1.0      ← Zeile 1
+Gebäude C    3.0        4.0      ← Zeile 2
+```
+
+### Schritt 1 — Spaltennormierung + Gewichtung (Eq. 4)
+
+Warum: Indikatoren haben unterschiedliche Skalen → faire Vergleichbarkeit durch L2-Normierung (jede Spalte bekommt Länge 1), dann Multiplikation mit dem zugehörigen Gewicht.
+
+```python
+M[:, j]          # die gesamte Spalte j (alle Zeilen, Spalte j)
+col_sq_sum       # Summe der quadrierten Spaltenwerte
+M[:, j] / sqrt(col_sq_sum) * weight[j]   # normiert + gewichtet
+```
+
+### Schritt 2 — Abstände zur Worst-Case- und Best-Case-Referenz (Eq. 5)
+
+```python
+ideal_max = M.max(axis=0)   # axis=0: Spaltenmaxima → Worst-Case je Attribut
+ideal_min = M.min(axis=0)   # Spaltenminima → Best-Case je Attribut
+
+d_from_max = np.sqrt(np.sum((M - ideal_max)**2, axis=1))
+#                            ↑ Broadcasting: ideal_max wird von jeder Zeile subtrahiert
+#                                            axis=1: über Spalten summieren → ein Wert je Gebäude
+```
+
+**Broadcasting:** `M - ideal_max` subtrahiert die einzeilige Referenz automatisch von *jeder* Zeile in M — kein Python-Loop nötig.
+
+**`axis=0` vs. `axis=1`:**
+- `axis=0` → über Zeilen hinweg kollabieren → ein Ergebnis je Spalte (z. B. Spaltenmaxima)
+- `axis=1` → über Spalten hinweg kollabieren → ein Ergebnis je Zeile/Gebäude (z. B. Abstandssumme)
+
+### Schritt 3 — Closeness-Koeffizient
+
+```python
+C = d_from_min / (d_from_max + d_from_min)
+# → C ≈ 0: Gebäude nahe am Best-Case (wenig vulnerabel)
+# → C ≈ 1: Gebäude nahe am Worst-Case (sehr vulnerabel)
+np.where(denom > 0, ..., 0.0)   # elementweiser if/else ohne Python-Loop
+```
+
+### Schritt 4 — Shannon-Entropie-Index U_i (Eq. 6)
+
+```python
+M[i]          # Zeile i: alle Indikatorwerte eines einzelnen Gebäudes
+p = row / row.sum()             # Anteile je Attribut (sollen auf 1 summieren)
+U[i] = 2.0 + (1/ln_n) * sum(p * log(p))   # Shannon-Entropie-Formel
+```
+
+- Alle Attribute gleich → maximale Homogenität → U nahe 1
+- Ein Attribut dominiert, Rest ≈ 0 → maximale Heterogenität → U = 2
+- Enthält eine Zeile eine Null → `log(0)` undefiniert → U = 2 als konservative Annahme
+
+### NumPy-Muster auf einen Blick
+
+| Ausdruck | Bedeutung |
+|---|---|
+| `M[:, j]` | Gesamte Spalte j |
+| `M[i]` | Gesamte Zeile i (ein Gebäude) |
+| `M - ideal_max` | Subtraktion einer Zeile von jeder Zeile (Broadcasting) |
+| `np.sum(..., axis=0)` | Über Zeilen summieren → ein Wert je Spalte |
+| `np.sum(..., axis=1)` | Über Spalten summieren → ein Wert je Zeile/Gebäude |
+| `a ** 2` | Jedes Element quadrieren (kein Loop) |
+| `np.where(cond, a, b)` | Elementweiser bedingter Ausdruck |
