@@ -17,6 +17,7 @@ Execution pattern (BaseScatterProcess / operation fan-out):
 Each branch receives the full exec_body and runs on its own Celery worker.
 """
 
+import pandas as pd
 from fastprocesses.core.base_process import BaseScatterProcess, parallel_step
 from fastprocesses.core.models import (
     ProcessDescription,
@@ -28,6 +29,15 @@ from fastprocesses.core.models import (
 )
 from fastprocesses.processes.process_registry import register_process
 from pydantic import BaseModel
+
+from ..algorithms.vulnerability import run_vulnerability_pipeline
+from ..models.field_names import (
+    COPING_CAPACITY_INDEX,
+    SENSITIVITY_INDEX,
+    SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
+    SOCIAL_VULNERABILITY_INDEX,
+)
+from ..models.inputs import PipelineParams
 
 # ---------------------------------------------------------------------------
 # Output model
@@ -498,7 +508,29 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             social_vulnerability_index, social_vulnerability_flood_potential
             (one value per building, keyed by building id).
         """
-        raise NotImplementedError
+        inputs: dict = exec_body["inputs"]
+        buildings_fc: dict = inputs["buildings"]
+        params = PipelineParams.model_validate(inputs.get("params", {}))
+
+        features: list[dict] = buildings_fc["features"]
+        rows = [
+            {"_id": f.get("id") or f["properties"].get("id"), **f["properties"]}
+            for f in features
+        ]
+        df = pd.DataFrame(rows).set_index("_id")
+
+        result_df = run_vulnerability_pipeline(df, params.vulnerability)
+
+        output_columns = [
+            SENSITIVITY_INDEX,
+            COPING_CAPACITY_INDEX,
+            SOCIAL_VULNERABILITY_INDEX,
+            SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
+        ]
+        return {
+            col: result_df[col].where(result_df[col].notna(), other=None).to_dict()
+            for col in output_columns
+        }
 
     @parallel_step
     def exposure_pipeline(self, exec_body: dict) -> dict:
