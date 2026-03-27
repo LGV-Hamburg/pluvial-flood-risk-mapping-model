@@ -318,7 +318,8 @@ class TestRunVulnerabilityPipeline:
             / "example"
             / "Building_ExampleLayer.csv"
         )
-        raw = pd.read_csv(csv_path, sep=";", decimal=",")
+        raw = pd.read_csv(csv_path, sep=",", decimal=".")
+        raw.columns = raw.columns.str.strip()
         df = pd.DataFrame(
             {
                 CHILDREN_UNDER_10: raw["C"].astype(float),
