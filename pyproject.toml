@@ -98,6 +98,9 @@ pre-commit = ">=4.0"
 
 [tool.pytest.ini_options]
 addopts = "-v"
+markers = [
+    "integration: marks tests as integration tests that require a running Redis instance (deselect with '-m \"not integration\"')",
+]
 
 [tool.poetry.group.docs]
 optional = true
