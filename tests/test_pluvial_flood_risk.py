@@ -342,3 +342,275 @@ class TestRunVulnerabilityPipeline:
 
         # SV_PF must be strictly positive for all buildings
         assert (result[SOCIAL_VULNERABILITY_FLOOD_POTENTIAL] > 0.0).all()
+
+
+# ---------------------------------------------------------------------------
+# Module 2 — Exposure pipeline
+# ---------------------------------------------------------------------------
+
+from pluvial_flood_risk.algorithms.exposure import (  # noqa: E402
+    compute_building_living_area,
+    compute_exposure_mobility_accessibility,
+    compute_residents_ground_floor,
+    compute_residents_per_building,
+    run_exposure_pipeline,
+)
+from pluvial_flood_risk.models.field_names import (  # noqa: E402
+    BUILDING_FOOTPRINT_AREA_M2,
+    BUILDING_LIVING_AREA_M2,
+    BUILDING_TYPE,
+    EXPOSURE_MOBILITY_ACCESSIBILITY,
+    FLOORS_ABOVE_GROUND,
+    LIVING_AREA_M2_STATISTICAL_UNIT,
+    RESIDENTS_GROUND_FLOOR,
+    RESIDENTS_IN_STATISTICAL_UNIT,
+    RESIDENTS_PER_BUILDING,
+)
+
+
+@pytest.fixture()
+def exposure_df() -> pd.DataFrame:
+    """Four representative buildings derived from Building_ExampleLayer.csv.
+
+    Row indices match the original OBJECTID for traceability.
+
+    Building 1: type=1, 1 floor  → R_G = R / 1  (all residents on ground floor)
+    Building 3: type=1, 2 floors → R_G = R / 2  (half on ground floor)
+    Building 4: type=2, 2 floors → R_G = 0      (ground floor commercial)
+    Building 16: type=1, 6 floors → R_G = R / 6
+    """
+    return pd.DataFrame(
+        {
+            FLOORS_ABOVE_GROUND: [1, 2, 2, 6],
+            BUILDING_TYPE: [1, 1, 2, 1],
+            BUILDING_FOOTPRINT_AREA_M2: [221.78, 179.62, 372.77, 510.34],
+            RESIDENTS_IN_STATISTICAL_UNIT: [250.0, 250.0, 250.0, 250.0],
+            LIVING_AREA_M2_STATISTICAL_UNIT: [9000.0, 9000.0, 9000.0, 9000.0],
+        },
+        index=[1, 3, 4, 16],
+    )
+
+
+class TestComputeBuildingLivingArea:
+    def test_type1_all_floors_residential(self, exposure_df: pd.DataFrame) -> None:
+        """Building type 1: Area_house = Floors × footprint."""
+        result = compute_building_living_area(exposure_df)
+        # Building 1: 1 × 221.78 = 221.78
+        assert result.loc[1] == pytest.approx(221.78)
+        # Building 16: 6 × 510.34 = 3062.05
+        assert result.loc[16] == pytest.approx(3062.04, rel=1e-4)
+
+    def test_type2_ground_floor_commercial(self, exposure_df: pd.DataFrame) -> None:
+        """Building type 2: Area_house = (Floors - 1) × footprint."""
+        result = compute_building_living_area(exposure_df)
+        # Building 4: (2 - 1) × 372.77 = 372.77
+        assert result.loc[4] == pytest.approx(372.77)
+
+    def test_type1_two_floors(self, exposure_df: pd.DataFrame) -> None:
+        """Building type 1, 2 floors: Area_house = 2 × footprint."""
+        result = compute_building_living_area(exposure_df)
+        # Building 3: 2 × 179.62 = 359.24
+        assert result.loc[3] == pytest.approx(359.24)
+
+    def test_returns_correct_name(self, exposure_df: pd.DataFrame) -> None:
+        assert compute_building_living_area(exposure_df).name == BUILDING_LIVING_AREA_M2
+
+
+class TestComputeResidentsPerBuilding:
+    def test_area_weighted_distribution(self, exposure_df: pd.DataFrame) -> None:
+        """R = Area_house / LivingArea × Residents."""
+        df = exposure_df.copy()
+        df[BUILDING_LIVING_AREA_M2] = compute_building_living_area(df)
+        result = compute_residents_per_building(df)
+        # Building 1: 221.78 / 9000 × 250 ≈ 6.16
+        assert result.loc[1] == pytest.approx(6.16, rel=1e-2)
+        # Building 16: 3062.04 / 9000 × 250 ≈ 85.06
+        assert result.loc[16] == pytest.approx(85.06, rel=1e-2)
+
+    def test_zero_living_area_returns_nan(self, exposure_df: pd.DataFrame) -> None:
+        """Division by zero living area must yield NaN, not an exception."""
+        df = exposure_df.copy()
+        df[BUILDING_LIVING_AREA_M2] = compute_building_living_area(df)
+        df.loc[1, LIVING_AREA_M2_STATISTICAL_UNIT] = 0.0
+        result = compute_residents_per_building(df)
+        assert math.isnan(result.loc[1])
+        assert not math.isnan(result.loc[3])
+
+    def test_returns_correct_name(self, exposure_df: pd.DataFrame) -> None:
+        df = exposure_df.copy()
+        df[BUILDING_LIVING_AREA_M2] = compute_building_living_area(df)
+        assert compute_residents_per_building(df).name == RESIDENTS_PER_BUILDING
+
+
+class TestComputeResidentsGroundFloor:
+    def test_type1_single_floor_equals_r(self, exposure_df: pd.DataFrame) -> None:
+        """Type 1, 1 floor: R_G = R / 1 = R."""
+        df = exposure_df.copy()
+        df[BUILDING_LIVING_AREA_M2] = compute_building_living_area(df)
+        df[RESIDENTS_PER_BUILDING] = compute_residents_per_building(df)
+        result = compute_residents_ground_floor(df)
+        assert result.loc[1] == pytest.approx(df.loc[1, RESIDENTS_PER_BUILDING])
+
+    def test_type2_ground_floor_is_zero(self, exposure_df: pd.DataFrame) -> None:
+        """Type 2 (commercial ground floor): R_G = 0."""
+        df = exposure_df.copy()
+        df[BUILDING_LIVING_AREA_M2] = compute_building_living_area(df)
+        df[RESIDENTS_PER_BUILDING] = compute_residents_per_building(df)
+        result = compute_residents_ground_floor(df)
+        assert result.loc[4] == pytest.approx(0.0)
+
+    def test_type1_two_floors_is_half_r(self, exposure_df: pd.DataFrame) -> None:
+        """Type 1, 2 floors: R_G = R / 2."""
+        df = exposure_df.copy()
+        df[BUILDING_LIVING_AREA_M2] = compute_building_living_area(df)
+        df[RESIDENTS_PER_BUILDING] = compute_residents_per_building(df)
+        result = compute_residents_ground_floor(df)
+        assert result.loc[3] == pytest.approx(
+            df.loc[3, RESIDENTS_PER_BUILDING] / 2.0, rel=1e-9
+        )
+
+    def test_type1_six_floors(self, exposure_df: pd.DataFrame) -> None:
+        """Type 1, 6 floors: R_G = R / 6 ≈ 14."""
+        df = exposure_df.copy()
+        df[BUILDING_LIVING_AREA_M2] = compute_building_living_area(df)
+        df[RESIDENTS_PER_BUILDING] = compute_residents_per_building(df)
+        result = compute_residents_ground_floor(df)
+        assert result.loc[16] == pytest.approx(85.06 / 6, rel=1e-2)
+
+    def test_returns_correct_name(self, exposure_df: pd.DataFrame) -> None:
+        df = exposure_df.copy()
+        df[BUILDING_LIVING_AREA_M2] = compute_building_living_area(df)
+        df[RESIDENTS_PER_BUILDING] = compute_residents_per_building(df)
+        assert compute_residents_ground_floor(df).name == RESIDENTS_GROUND_FLOOR
+
+
+class TestComputeExposureMobilityAccessibility:
+    def test_equals_residents_per_building(self, exposure_df: pd.DataFrame) -> None:
+        """EMA is semantically R — all residents, not just ground-floor."""
+        df = exposure_df.copy()
+        df[BUILDING_LIVING_AREA_M2] = compute_building_living_area(df)
+        df[RESIDENTS_PER_BUILDING] = compute_residents_per_building(df)
+        ema = compute_exposure_mobility_accessibility(df)
+        pd.testing.assert_series_equal(
+            ema.reset_index(drop=True),
+            df[RESIDENTS_PER_BUILDING]
+            .rename(EXPOSURE_MOBILITY_ACCESSIBILITY)
+            .reset_index(drop=True),
+        )
+
+    def test_returns_correct_name(self, exposure_df: pd.DataFrame) -> None:
+        df = exposure_df.copy()
+        df[BUILDING_LIVING_AREA_M2] = compute_building_living_area(df)
+        df[RESIDENTS_PER_BUILDING] = compute_residents_per_building(df)
+        assert (
+            compute_exposure_mobility_accessibility(df).name
+            == EXPOSURE_MOBILITY_ACCESSIBILITY
+        )
+
+
+class TestRunExposurePipeline:
+    def test_adds_four_columns(self, exposure_df: pd.DataFrame) -> None:
+        result = run_exposure_pipeline(exposure_df)
+        for col in [
+            BUILDING_LIVING_AREA_M2,
+            RESIDENTS_PER_BUILDING,
+            RESIDENTS_GROUND_FLOOR,
+            EXPOSURE_MOBILITY_ACCESSIBILITY,
+        ]:
+            assert col in result.columns
+
+    def test_original_columns_preserved(self, exposure_df: pd.DataFrame) -> None:
+        result = run_exposure_pipeline(exposure_df)
+        for col in exposure_df.columns:
+            assert col in result.columns
+
+    def test_no_nan_for_complete_data(self, exposure_df: pd.DataFrame) -> None:
+        result = run_exposure_pipeline(exposure_df)
+        computed = [
+            BUILDING_LIVING_AREA_M2,
+            RESIDENTS_PER_BUILDING,
+            RESIDENTS_GROUND_FLOOR,
+            EXPOSURE_MOBILITY_ACCESSIBILITY,
+        ]
+        assert not result[computed].isna().any().any()
+
+    def test_r_g_nonnegative(self, exposure_df: pd.DataFrame) -> None:
+        """Ground-floor residents must never be negative."""
+        result = run_exposure_pipeline(exposure_df)
+        assert (result[RESIDENTS_GROUND_FLOOR] >= 0.0).all()
+
+    def test_r_g_le_r(self, exposure_df: pd.DataFrame) -> None:
+        """Ground-floor residents must not exceed total residents per building."""
+        result = run_exposure_pipeline(exposure_df)
+        assert (
+            result[RESIDENTS_GROUND_FLOOR] <= result[RESIDENTS_PER_BUILDING] + 1e-9
+        ).all()
+
+    def test_ema_equals_r(self, exposure_df: pd.DataFrame) -> None:
+        result = run_exposure_pipeline(exposure_df)
+        pd.testing.assert_series_equal(
+            result[EXPOSURE_MOBILITY_ACCESSIBILITY].reset_index(drop=True),
+            result[RESIDENTS_PER_BUILDING].reset_index(drop=True),
+            check_names=False,
+        )
+
+    def test_example_csv_data(self) -> None:
+        """Smoke-test against full example CSV with known reference values."""
+        import pathlib
+
+        csv_path = (
+            pathlib.Path(__file__).parents[1]
+            / "data"
+            / "example"
+            / "Building_ExampleLayer.csv"
+        )
+        raw = pd.read_csv(csv_path, sep=",", decimal=".")
+        raw.columns = raw.columns.str.strip()
+
+        df = pd.DataFrame(
+            {
+                FLOORS_ABOVE_GROUND: raw["Floors"].astype(float),
+                BUILDING_TYPE: raw["Building type"].astype(float),
+                BUILDING_FOOTPRINT_AREA_M2: raw["Shape_Area"].astype(float),
+                RESIDENTS_IN_STATISTICAL_UNIT: raw["Residents"].astype(float),
+                LIVING_AREA_M2_STATISTICAL_UNIT: raw["LivingArea"].astype(float),
+            }
+        )
+
+        result = run_exposure_pipeline(df)
+
+        # All outputs present and finite
+        for col in [
+            BUILDING_LIVING_AREA_M2,
+            RESIDENTS_PER_BUILDING,
+            RESIDENTS_GROUND_FLOOR,
+        ]:
+            assert result[col].notna().all(), f"NaN in {col}"
+
+        # Area_house matches CSV column
+        pd.testing.assert_series_equal(
+            result[BUILDING_LIVING_AREA_M2].reset_index(drop=True),
+            raw["Area_house"].astype(float).reset_index(drop=True),
+            check_names=False,
+            rtol=1e-3,
+        )
+
+        # R matches CSV column (within rounding)
+        pd.testing.assert_series_equal(
+            result[RESIDENTS_PER_BUILDING].round(0).reset_index(drop=True),
+            raw["R"].astype(float).reset_index(drop=True),
+            check_names=False,
+            rtol=0.02,
+        )
+
+        # R_G matches CSV column within 1 resident.
+        # The original ArcPy script rounded R to an integer before computing
+        # R_G = round(R) / Floors, so some rows differ by ≤1 from our
+        # continuous (more accurate) computation.
+        pd.testing.assert_series_equal(
+            result[RESIDENTS_GROUND_FLOOR].round(0).reset_index(drop=True),
+            raw["R_G"].astype(float).reset_index(drop=True),
+            check_names=False,
+            atol=1.0,
+            check_exact=False,
+        )

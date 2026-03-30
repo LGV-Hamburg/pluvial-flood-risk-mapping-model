@@ -146,7 +146,7 @@ Nichtlineare Transformation: `SV_PF = (SV + Threshold × mean(SV))^Exponent`
 
 ---
 
-## Modul 2 – Exposition
+## Modul 2 – Exposition ✅
 
 ### Step 2 – Residents per Building / Ground Floor
 _Skript: `2_Step2_Exposure_Residents.py`_

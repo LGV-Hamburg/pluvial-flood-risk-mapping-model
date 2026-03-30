@@ -17,6 +17,7 @@ Execution pattern (BaseScatterProcess / operation fan-out):
 Each branch receives the full exec_body and runs on its own Celery worker.
 """
 
+import geopandas as gpd
 import pandas as pd
 from fastprocesses.core.base_process import BaseScatterProcess, parallel_step
 from fastprocesses.core.models import (
@@ -30,9 +31,15 @@ from fastprocesses.core.models import (
 from fastprocesses.processes.process_registry import register_process
 from pydantic import BaseModel
 
+from ..algorithms.exposure import run_exposure_pipeline
 from ..algorithms.vulnerability import run_vulnerability_pipeline
 from ..models.field_names import (
+    BUILDING_FOOTPRINT_AREA_M2,
+    BUILDING_LIVING_AREA_M2,
     COPING_CAPACITY_INDEX,
+    EXPOSURE_MOBILITY_ACCESSIBILITY,
+    RESIDENTS_GROUND_FLOOR,
+    RESIDENTS_PER_BUILDING,
     SENSITIVITY_INDEX,
     SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
     SOCIAL_VULNERABILITY_INDEX,
@@ -537,10 +544,37 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         """Step 2: Residents per building and ground-floor exposure index.
 
         Returns:
-            dict with keys: residents_per_building, residents_ground_floor
+            dict with keys: building_living_area_m2, residents_per_building,
+            residents_ground_floor, exposure_mobility_accessibility
             (one value per building, keyed by building id).
         """
-        raise NotImplementedError
+        inputs: dict = exec_body["inputs"]
+        buildings_fc: dict = inputs["buildings"]
+
+        # Parse GeoJSON → GeoDataFrame so we can derive footprint area from geometry.
+        gdf = gpd.GeoDataFrame.from_features(buildings_fc["features"])
+        if gdf.crs is None:
+            gdf = gdf.set_crs("EPSG:4326")
+        # Project to a metric CRS for accurate area computation.
+        gdf_metric = gdf.to_crs(gdf.estimate_utm_crs())
+        gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
+
+        # Recover the building id used as dict key (keep it in index).
+        if "id" in gdf_metric.columns:
+            gdf_metric = gdf_metric.set_index("id")
+
+        result_df = run_exposure_pipeline(gdf_metric)
+
+        output_columns = [
+            BUILDING_LIVING_AREA_M2,
+            RESIDENTS_PER_BUILDING,
+            RESIDENTS_GROUND_FLOOR,
+            EXPOSURE_MOBILITY_ACCESSIBILITY,
+        ]
+        return {
+            col: result_df[col].where(result_df[col].notna(), other=None).to_dict()
+            for col in output_columns
+        }
 
     @parallel_step
     def hazard_wb_pipeline(self, exec_body: dict) -> dict:

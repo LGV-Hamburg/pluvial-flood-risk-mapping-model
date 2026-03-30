@@ -66,6 +66,9 @@ SOCIAL_VULNERABILITY_FLOOD_POTENTIAL: str = "social_vulnerability_flood_potentia
 # Exposure — building attributes (Step 2)
 # ---------------------------------------------------------------------------
 
+BUILDING_FOOTPRINT_AREA_M2: str = "building_footprint_area_m2"
+"""Footprint area of the building polygon [m²] (Shape_Area). Derived from geometry."""
+
 FLOORS_ABOVE_GROUND: str = "floors_above_ground"
 """Number of floors above ground."""
 
