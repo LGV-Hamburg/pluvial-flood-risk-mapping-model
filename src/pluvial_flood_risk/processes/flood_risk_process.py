@@ -38,11 +38,14 @@ from ..models.field_names import (
     BUILDING_LIVING_AREA_M2,
     COPING_CAPACITY_INDEX,
     EXPOSURE_MOBILITY_ACCESSIBILITY,
+    LIVING_AREA_M2_STATISTICAL_UNIT,
     RESIDENTS_GROUND_FLOOR,
+    RESIDENTS_IN_STATISTICAL_UNIT,
     RESIDENTS_PER_BUILDING,
     SENSITIVITY_INDEX,
     SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
     SOCIAL_VULNERABILITY_INDEX,
+    STATISTICAL_UNIT_ID,
 )
 from ..models.inputs import PipelineParams
 
@@ -118,86 +121,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                         {"format": "geojson-feature-collection"},
                         {"$ref": "https://geojson.org/schema/FeatureCollection.json"},
                         {
-                            "type": "object",
-                            "properties": {
-                                "features": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "required": ["type", "geometry", "properties"],
-                                        "properties": {
-                                            "type": {"type": "string"},
-                                            "geometry": {
-                                                "$ref": "https://geojson.org/schema/Polygon.json"
-                                            },
-                                            "properties": {
-                                                "type": "object",
-                                                "required": [
-                                                    "id",
-                                                    "floors_above_ground",
-                                                    "building_type",
-                                                    "children_under_10",
-                                                    "elderly_singles_over_65",
-                                                    "social_welfare_recipients",
-                                                    "no_highschool_diploma",
-                                                    "statistical_unit_id",
-                                                    "residents_in_statistical_unit",
-                                                    "living_area_m2_statistical_unit",
-                                                ],
-                                                "properties": {
-                                                    "id": {
-                                                        "type": ["integer", "string"]
-                                                    },
-                                                    "floors_above_ground": {
-                                                        "type": "integer",
-                                                        "minimum": 1,
-                                                        "description": "Number of floors above ground",
-                                                    },
-                                                    "building_type": {
-                                                        "type": "integer",
-                                                        "minimum": 1,
-                                                        "description": "Building type code (1 = detached, 2 = semi-detached, …)",
-                                                    },
-                                                    "children_under_10": {
-                                                        "type": "number",
-                                                        "minimum": 0,
-                                                        "description": "Number of children under 10 years (sensitivity indicator C)",
-                                                    },
-                                                    "elderly_singles_over_65": {
-                                                        "type": "number",
-                                                        "minimum": 0,
-                                                        "description": "Number of elderly singles over 65 years (sensitivity indicator ES)",
-                                                    },
-                                                    "social_welfare_recipients": {
-                                                        "type": "number",
-                                                        "minimum": 0,
-                                                        "description": "Number of social welfare recipients (coping capacity indicator WR)",
-                                                    },
-                                                    "no_highschool_diploma": {
-                                                        "type": "number",
-                                                        "minimum": 0,
-                                                        "description": "Number of residents without high-school diploma in last 3 years (coping capacity indicator EDQ)",
-                                                    },
-                                                    "statistical_unit_id": {
-                                                        "type": ["integer", "string"],
-                                                        "description": "Reference key linking building to a statistical unit",
-                                                    },
-                                                    "residents_in_statistical_unit": {
-                                                        "type": "number",
-                                                        "minimum": 0,
-                                                        "description": "Total residents registered in the statistical unit",
-                                                    },
-                                                    "living_area_m2_statistical_unit": {
-                                                        "type": "number",
-                                                        "minimum": 0,
-                                                        "description": "Total residential floor area [m²] of the statistical unit",
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                }
-                            },
+                            "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/buildings-schema.json"
                         },
                     ]
                 ),
@@ -216,26 +140,36 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                         {"format": "geojson-feature-collection"},
                         {"$ref": "https://geojson.org/schema/FeatureCollection.json"},
                         {
-                            "type": "object",
-                            "properties": {
-                                "features": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "required": ["type", "geometry"],
-                                        "properties": {
-                                            "type": {"type": "string"},
-                                            "geometry": {
-                                                "$ref": "https://geojson.org/schema/LineString.json"
-                                            },
-                                        },
-                                    },
-                                }
-                            },
+                            "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/streets-schema.json"
                         },
                     ]
                 ),
                 minOccurs=1,
+                maxOccurs=1,
+            ),
+            "statistical_units": ProcessInput(
+                title="Statistical Units Feature Collection (optional)",
+                description=(
+                    "GeoJSON FeatureCollection of statistical unit polygons carrying "
+                    "census attributes. Required only when 'residents_in_statistical_unit' "
+                    "and 'living_area_m2_statistical_unit' are NOT pre-joined onto the "
+                    "building features. Each feature must have properties: "
+                    "'statistical_unit_id' (matching the building property), "
+                    "'residents' (total registered residents), and "
+                    "'living_area_m2' (total residential floor area [m²]). "
+                    "The join is performed by attribute (statistical_unit_id), "
+                    "not spatially."
+                ),
+                schema=Schema(
+                    allOf=[
+                        {"format": "geojson-feature-collection"},
+                        {"$ref": "https://geojson.org/schema/FeatureCollection.json"},
+                        {
+                            "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/statistical-units-schema.json"
+                        },
+                    ]
+                ),
+                minOccurs=0,
                 maxOccurs=1,
             ),
             "flood_layers_wb": ProcessInput(
@@ -258,17 +192,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                                 "$ref": "https://geojson.org/schema/FeatureCollection.json"
                             },
                             {
-                                "type": "object",
-                                "required": ["depth_cm"],
-                                "properties": {
-                                    "depth_cm": {
-                                        "type": "integer",
-                                        "minimum": 20,
-                                        "maximum": 100,
-                                        "multipleOf": 10,
-                                        "description": "Water depth class this layer represents [cm]",
-                                    }
-                                },
+                                "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layer-wb-schema.json"
                             },
                         ]
                     },
@@ -287,6 +211,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     allOf=[
                         {"format": "geojson-feature-collection"},
                         {"$ref": "https://geojson.org/schema/FeatureCollection.json"},
+                        {
+                            "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layer-ma-schema.json"
+                        },
                     ]
                 ),
                 minOccurs=1,
@@ -365,6 +292,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                                         "type": "integer",
                                         "minimum": 1,
                                         "default": 2,
+                                        "maximum": 3,
                                         "description": "Power applied to shifted SVI (Eq. 7)",
                                     },
                                 },
@@ -558,6 +486,35 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         # Project to a metric CRS for accurate area computation.
         gdf_metric = gdf.to_crs(gdf.estimate_utm_crs())
         gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
+
+        # Join residents / living_area from statistical_units when not pre-joined.
+        needs_join = (
+            RESIDENTS_IN_STATISTICAL_UNIT not in gdf_metric.columns
+            or LIVING_AREA_M2_STATISTICAL_UNIT not in gdf_metric.columns
+        )
+        if needs_join:
+            stat_units_fc = inputs.get("statistical_units")
+            if stat_units_fc is None:
+                raise ValueError(
+                    "The buildings FeatureCollection is missing "
+                    "'residents_in_statistical_unit' and/or "
+                    "'living_area_m2_statistical_unit'. "
+                    "Provide these as building properties, or supply a "
+                    "'statistical_units' FeatureCollection input so the "
+                    "values can be joined automatically."
+                )
+            stat_rows = [
+                {
+                    STATISTICAL_UNIT_ID: f["properties"]["statistical_unit_id"],
+                    RESIDENTS_IN_STATISTICAL_UNIT: f["properties"]["residents"],
+                    LIVING_AREA_M2_STATISTICAL_UNIT: f["properties"]["living_area_m2"],
+                }
+                for f in stat_units_fc["features"]
+            ]
+            stat_df = pd.DataFrame(stat_rows).drop_duplicates(
+                subset=STATISTICAL_UNIT_ID
+            )
+            gdf_metric = gdf_metric.merge(stat_df, on=STATISTICAL_UNIT_ID, how="left")
 
         # Recover the building id used as dict key (keep it in index).
         if "id" in gdf_metric.columns:
