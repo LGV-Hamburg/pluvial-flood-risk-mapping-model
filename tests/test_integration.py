@@ -400,4 +400,141 @@ class TestUnimplementedBranches:
     ) -> None:
         with pytest.raises(NotImplementedError):
             process.merge_results({})
-            process.merge_results({})
+
+
+# ---------------------------------------------------------------------------
+# 6. exposure_pipeline — statistical_units join mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def exec_body_with_stat_units() -> dict:
+    """Same three buildings as exec_body, but residents/living_area are NOT
+    pre-joined into the building properties.  Instead a separate
+    'statistical_units' FeatureCollection is provided and the join is done
+    inside exposure_pipeline.
+
+    Both modes must produce identical numeric results.
+    """
+
+    def _feature(fid, lon, floors, btype, c, es, wr, edq):
+        return {
+            "type": "Feature",
+            "id": fid,
+            "geometry": _rect(lon, _LAT0),
+            "properties": {
+                "id": fid,
+                "floors_above_ground": floors,
+                "building_type": btype,
+                "children_under_10": c,
+                "elderly_singles_over_65": es,
+                "social_welfare_recipients": wr,
+                "no_highschool_diploma": edq,
+                # Only the FK — no residents/living_area here
+                "statistical_unit_id": 100,
+            },
+        }
+
+    return {
+        "inputs": {
+            "buildings": {
+                "type": "FeatureCollection",
+                "features": [
+                    _feature(1, _LON0, 1, 1, c=20, es=15, wr=18, edq=30),
+                    _feature(2, _LON0 + 0.0004, 4, 1, c=8, es=5, wr=6, edq=12),
+                    _feature(3, _LON0 + 0.0008, 3, 2, c=1, es=1, wr=1, edq=2),
+                ],
+            },
+            # Lookup table supplied as a separate input
+            "statistical_units": {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": None,
+                        "properties": {
+                            "statistical_unit_id": 100,
+                            "residents": 500.0,
+                            "living_area_m2": 18_000.0,
+                        },
+                    }
+                ],
+            },
+        }
+    }
+
+
+@pytest.mark.integration
+class TestExposurePipelineStatisticalUnitsJoin:
+    """exposure_pipeline — run with statistical_units as separate input.
+
+    Verifies that the automatic join path produces the same results as when
+    resident/living-area values are pre-joined into the buildings properties.
+    """
+
+    @pytest.fixture(scope="class")
+    def result_joined(self, process: PluvialFloodRiskProcess, exec_body: dict) -> dict:
+        """Result from pre-joined mode (baseline)."""
+        return process.exposure_pipeline(exec_body)
+
+    @pytest.fixture(scope="class")
+    def result_lookup(
+        self,
+        process: PluvialFloodRiskProcess,
+        exec_body_with_stat_units: dict,
+    ) -> dict:
+        """Result from statistical_units join mode."""
+        return process.exposure_pipeline(exec_body_with_stat_units)
+
+    def test_lookup_mode_returns_four_output_keys(self, result_lookup: dict) -> None:
+        expected = {
+            BUILDING_LIVING_AREA_M2,
+            RESIDENTS_PER_BUILDING,
+            RESIDENTS_GROUND_FLOOR,
+            EXPOSURE_MOBILITY_ACCESSIBILITY,
+        }
+        assert set(result_lookup.keys()) == expected
+
+    def test_lookup_mode_all_building_ids_present(self, result_lookup: dict) -> None:
+        for col_dict in result_lookup.values():
+            assert set(col_dict.keys()) == {1, 2, 3}
+
+    def test_lookup_mode_matches_prejoined_mode(
+        self, result_joined: dict, result_lookup: dict
+    ) -> None:
+        """Both input modes must yield numerically identical results."""
+        for col in result_joined:
+            for bid in (1, 2, 3):
+                assert result_lookup[col][bid] == pytest.approx(
+                    result_joined[col][bid], rel=1e-9
+                ), f"Mismatch in {col}[{bid}]"
+
+    def test_missing_both_inputs_raises_value_error(
+        self, process: PluvialFloodRiskProcess
+    ) -> None:
+        """If neither mode is provided the process must fail with a clear message."""
+        bad_body = {
+            "inputs": {
+                "buildings": {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "id": 1,
+                            "geometry": _rect(_LON0, _LAT0),
+                            "properties": {
+                                "id": 1,
+                                "floors_above_ground": 2,
+                                "building_type": 1,
+                                "statistical_unit_id": 100,
+                                # residents_in_statistical_unit and
+                                # living_area_m2_statistical_unit intentionally absent
+                            },
+                        }
+                    ],
+                }
+                # statistical_units intentionally absent
+            }
+        }
+        with pytest.raises(ValueError, match="statistical_units"):
+            process.exposure_pipeline(bad_body)
