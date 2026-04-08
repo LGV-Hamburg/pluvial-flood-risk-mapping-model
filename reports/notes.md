@@ -170,31 +170,45 @@ Formel Erdgeschoss: `R_G = −(Building_type − 2) × R / Floors`
 
 ## Modul 3 – Gefährdung: Mobilität & Erreichbarkeit
 
+> **Referenzskript für die Implementierung: `v2`-Versionen** (`3_Step1_…_v2.py`, `3_Step2_…_v2.py`)
+> Step 2 ist in beiden Versionen identisch. Step 1 wurde vereinfacht (siehe unten).
+
 ### Step 3.1 – Räumliche Verschneidung Mobilitätsgefährdung
-_Skript: `3_Step1_Calculating_the_Hazard_for_Mobility_and_Accessability.py`_
+_Skript: `3_Step1_Calculating_the_Hazard_for_Mobility_and_Accessability_v2.py`_
 
 Erzeugt konzentrische Pufferzonen um Gebäude, verschneidet diese mit Straßen- und Überflutungslayern und tabelliert den überfluteten Flächenanteil je Zone.
 
-#### Inputs
+#### Inputs (v2 — vereinfacht gegenüber v1)
 - Buildings geometry (Gebäude-Feature-Class mit Feld `ID`)
-- Buffer 1 (z. B. 5 m) – direkte Umgebung (Überflutung)
-- Buffer 2 (z. B. 15 m) – nahe Zugangswege (Straßen × Überflutung)
-- Buffer 3 (z. B. 30 m) – erweiterte Zugangswege (Straßen × Überflutung)
-- Street Layer 1 (für 15-m-Zone)
-- Street Layer 2 (für 30-m-Zone, analog zum vorherigen)
-- Flood Layer für 5-m-Zone (z. B. 30-cm-Szenario)
-- Flood Layer für 15-m-Zone
-- Flood Layer für 30-m-Zone
+- Buffer 1 (z. B. 5 m) – direkte Umgebung (Überflutung ohne Straßen)
+- Buffer 2 (z. B. 15 m) – innere Straßenzone
+- Ringbreite äußere Zone (z. B. 15 m → ergibt 15–30-m-Ring ab Gebäude) ← _neu in v2, ersetzt festen Buffer 3_
+- **Ein** Street Layer (für beide Straßenzonen) ← _v1 hatte zwei getrennte Layer_
+- Flood Layer für 15m/30m-Straßenzonen ← _v1 hatte drei getrennte Flood-Layer_
+- Flood Layer für 5m-Zone (kann abweichen)
 
 #### Outputs
 - `F30A5m` / `F30P5m` – überflutete Fläche [m²] / Anteil [%] im 5-m-Puffer
 - `F30A15m` / `F30P15m` – überflutete Fläche / Anteil im 15-m-Straßenbereich
 - `F30A30m` / `F30P30m` – überflutete Fläche / Anteil im 15–30-m-Straßenbereich
 
+#### Geometrische Konstruktion (v2)
+1. `Buffer(buildings, 15m, OUTSIDE_ONLY)` → B15
+2. `MultipleRingBuffer(B15, +ringbreite, OUTSIDE_ONLY)` → B1530 (äußerer Ring)
+3. `Intersect([streets, B1530])` → BuS30 (Straßen im äußeren Ring)
+4. `TabulateIntersection(BuS30, flood_layer)` → F30A30m / F30P30m
+5. `Erase(B15, buildings)` → Bu15m (innerer Ring ohne Gebäudefläche)
+6. `Intersect([streets, Bu15m])` → BuS15
+7. `TabulateIntersection(BuS15, flood_layer)` → F30A15m / F30P15m
+8. `Buffer(buildings, 5m, OUTSIDE_ONLY)` → B5 → `Erase(B5, buildings)` → Bu5
+9. `TabulateIntersection(Bu5, flood_layer_5m)` → F30A5m / F30P5m
+
+> **Hinweis für Implementierung:** v1 enthielt ein zweites `Erase` auf BuS30, das bei dicht stehenden Gebäuden zu minimal anderen Zonengeometrien führte. v2 verzichtet darauf — das ist sowohl einfacher als auch konsistenter. Bei der geopandas-Umsetzung analog vorgehen.
+
 ---
 
 ### Step 3.2 – Mobilitätsgefährdungsindex (Log-Normal)
-_Skript: `3_Step2_Calculating_the_Hazard_for_Mobility_and_Accessability.py`_
+_Skript: `3_Step2_Calculating_the_Hazard_for_Mobility_and_Accessability_v2.py`_
 
 Formel: `HMA = lognorm.cdf(max(Anteil_5m, Anteil_15m, Anteil_30m) × 4, σ)`
 
