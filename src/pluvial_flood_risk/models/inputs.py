@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
-
 # ---------------------------------------------------------------------------
 # Vulnerability (Steps 1.1-1.4)
 # ---------------------------------------------------------------------------
@@ -29,9 +28,7 @@ class SensitivityWeights(BaseModel):
     def weights_sum_to_one(self) -> SensitivityWeights:
         total = self.children_under_10 + self.elderly_singles_over_65
         if abs(total - 1.0) > 1e-9:
-            raise ValueError(
-                f"SensitivityWeights must sum to 1.0, got {total:.6f}"
-            )
+            raise ValueError(f"SensitivityWeights must sum to 1.0, got {total:.6f}")
         return self
 
 
@@ -49,9 +46,7 @@ class CopingCapacityWeights(BaseModel):
     def weights_sum_to_one(self) -> CopingCapacityWeights:
         total = self.social_welfare_recipients + self.no_highschool_diploma
         if abs(total - 1.0) > 1e-9:
-            raise ValueError(
-                f"CopingCapacityWeights must sum to 1.0, got {total:.6f}"
-            )
+            raise ValueError(f"CopingCapacityWeights must sum to 1.0, got {total:.6f}")
         return self
 
 
@@ -69,9 +64,7 @@ class SVIWeights(BaseModel):
     def weights_sum_to_one(self) -> SVIWeights:
         total = self.sensitivity + self.coping_capacity
         if abs(total - 1.0) > 1e-9:
-            raise ValueError(
-                f"SVIWeights must sum to 1.0, got {total:.6f}"
-            )
+            raise ValueError(f"SVIWeights must sum to 1.0, got {total:.6f}")
         return self
 
 
@@ -153,6 +146,17 @@ class HazardParams(BaseModel):
             "(Eq. 11). μ is fixed at 0 in the paper."
         ),
     )
+    ma_flood_level_cm: int = Field(
+        default=30,
+        ge=20,
+        le=100,
+        multiple_of=10,
+        description=(
+            "Water depth class [cm] selected from the combined flood_layers input "
+            "for the mobility & accessibility hazard (Steps 3.1–3.2). "
+            "Default: 30 cm as used in Vogelbacher et al. (2025)."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -204,5 +208,19 @@ class PipelineParams(BaseModel):
         description=(
             "Number of iterations for the head/tail-breaks classification (Step 6). "
             "Yields n+1 risk classes (no risk … very high risk)."
+        ),
+    )
+    target_crs: str | None = Field(
+        default=None,
+        description=(
+            "EPSG code or proj-string of the projected (metric) CRS to use for all "
+            "spatial calculations (buffer, overlay, area). "
+            "Examples: 'EPSG:25832', 'EPSG:32632', 'EPSG:2263'. "
+            "When set, every input layer is reprojected to this CRS regardless of "
+            "its original CRS. "
+            "When None (default): if the input data is already in a projected CRS "
+            "it is used as-is; if the input is geographic (degrees, e.g. WGS84 / "
+            "EPSG:4326) the UTM zone is auto-detected via geopandas.estimate_utm_crs(). "
+            "Must be a metric (linear unit = metres) CRS."
         ),
     )
