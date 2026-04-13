@@ -32,12 +32,14 @@ from fastprocesses.processes.process_registry import register_process
 from pydantic import BaseModel
 
 from ..algorithms.exposure import run_exposure_pipeline
+from ..algorithms.hazard_ma import run_hazard_ma_pipeline
 from ..algorithms.vulnerability import run_vulnerability_pipeline
 from ..models.field_names import (
     BUILDING_FOOTPRINT_AREA_M2,
     BUILDING_LIVING_AREA_M2,
     COPING_CAPACITY_INDEX,
     EXPOSURE_MOBILITY_ACCESSIBILITY,
+    HAZARD_MOBILITY_ACCESSIBILITY,
     LIVING_AREA_M2_STATISTICAL_UNIT,
     RESIDENTS_GROUND_FLOOR,
     RESIDENTS_IN_STATISTICAL_UNIT,
@@ -172,47 +174,25 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 minOccurs=0,
                 maxOccurs=1,
             ),
-            "flood_layers_wb": ProcessInput(
-                title="Flood Layers — Well-Being (multiple depth classes)",
+            "flood_layers": ProcessInput(
+                title="Flood Layers — All Depth Classes",
                 description=(
-                    "Array of GeoJSON FeatureCollections representing flooded areas, "
-                    "one entry per water-depth class (typically 20–100 cm in 10 cm "
-                    "increments, i.e. up to 9 layers). Array order must be ascending "
-                    "depth. Used for the 2 m building buffer hazard calculation "
-                    "(Steps 4.1–4.2, Eq. 11/12)."
-                ),
-                schema=Schema(
-                    type="array",
-                    minItems=1,
-                    maxItems=9,
-                    items={
-                        "allOf": [
-                            {"format": "geojson-feature-collection"},
-                            {
-                                "$ref": "https://geojson.org/schema/FeatureCollection.json"
-                            },
-                            {
-                                "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layer-wb-schema.json"
-                            },
-                        ]
-                    },
-                ),
-                minOccurs=1,
-                maxOccurs=1,
-            ),
-            "flood_layer_ma": ProcessInput(
-                title="Flood Layer — Mobility & Accessibility (30 cm scenario)",
-                description=(
-                    "GeoJSON FeatureCollection of flooded areas for the 30 cm water "
-                    "depth scenario. Used to compute the hazard index for mobility & "
-                    "accessibility via concentric buffer zones (Steps 3.1–3.2, Eq. 13)."
+                    "Combined GeoJSON FeatureCollection containing flooded-area "
+                    "polygons for all water-depth classes. Each feature must carry "
+                    "a 'level_cm' property (integer, typically 20–100 cm in 10 cm "
+                    "increments). "
+                    "The well-being hazard pipeline (Steps 4.1–4.2) groups features "
+                    "by 'level_cm' and processes each depth class independently. "
+                    "The mobility & accessibility hazard pipeline (Steps 3.1–3.2) "
+                    "uses only features matching "
+                    "'hazard_params.ma_flood_level_cm' (default: 30 cm)."
                 ),
                 schema=Schema(
                     allOf=[
                         {"format": "geojson-feature-collection"},
                         {"$ref": "https://geojson.org/schema/FeatureCollection.json"},
                         {
-                            "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layer-ma-schema.json"
+                            "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layers-schema.json"
                         },
                     ]
                 ),
@@ -338,6 +318,14 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                                         "default": 0.25,
                                         "description": "Shape parameter σ of the log-normal CDF (Eq. 11)",
                                     },
+                                    "ma_flood_level_cm": {
+                                        "type": "integer",
+                                        "minimum": 20,
+                                        "maximum": 100,
+                                        "multipleOf": 10,
+                                        "default": 30,
+                                        "description": "Water depth class [cm] from flood_layers used for the mobility & accessibility hazard (Steps 3.1-3.2)",
+                                    },
                                 },
                             }
                         ),
@@ -368,6 +356,22 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                                         "minimum": 1,
                                         "default": 4,
                                         "description": "Number of head/tail break iterations for risk classification",
+                                    },
+                                    "target_crs": {
+                                        "type": "string",
+                                        "default": None,
+                                        "examples": [
+                                            "EPSG:25832",
+                                            "EPSG:32632",
+                                            "EPSG:2263",
+                                        ],
+                                        "description": (
+                                            "EPSG code of the projected (metric) CRS for spatial "
+                                            "calculations. Omit to auto-detect UTM zone from the "
+                                            "input data centroid. Required when inputs are already "
+                                            "in a local projected CRS (e.g. 'EPSG:25832' for "
+                                            "Hamburg / ETRS89 UTM-32N)."
+                                        ),
                                     },
                                 },
                             }
@@ -427,6 +431,43 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     )
 
     # ------------------------------------------------------------------
+    # CRS helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _to_metric(
+        gdf: gpd.GeoDataFrame,
+        target_crs: str | None,
+        fallback_gdf: gpd.GeoDataFrame | None = None,
+    ) -> gpd.GeoDataFrame:
+        """Project *gdf* to a metric CRS and return the result.
+
+        Resolution order:
+        1. ``target_crs`` from params — used as-is (must be a projected CRS).
+        2. Input already projected — keep its CRS unchanged.
+        3. Input geographic (degrees) — auto-detect UTM zone from *gdf* centroid,
+           or from *fallback_gdf* centroid when *gdf* is empty (e.g. an empty
+           flood layer).
+
+        Parameters
+        ----------
+        gdf:
+            GeoDataFrame to project.  ``crs`` must be set.
+        target_crs:
+            Explicit CRS string (e.g. ``'EPSG:25832'``) or ``None``.
+        fallback_gdf:
+            Optional GeoDataFrame used for UTM estimation when *gdf* is empty.
+        """
+        if target_crs is not None:
+            return gdf.to_crs(target_crs)
+        if gdf.crs is not None and gdf.crs.is_projected:
+            return gdf  # already metric — no reprojection needed
+        # Geographic CRS (e.g. EPSG:4326) → estimate UTM zone
+        reference = gdf if not gdf.empty else (fallback_gdf or gdf)
+        utm = reference.estimate_utm_crs()
+        return gdf.to_crs(utm)
+
+    # ------------------------------------------------------------------
     # Parallel branches
     #
     # Each @parallel_step runs on its own Celery worker and receives the
@@ -478,13 +519,14 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         """
         inputs: dict = exec_body["inputs"]
         buildings_fc: dict = inputs["buildings"]
+        params = PipelineParams.model_validate(inputs.get("params", {}))
 
         # Parse GeoJSON → GeoDataFrame so we can derive footprint area from geometry.
         gdf = gpd.GeoDataFrame.from_features(buildings_fc["features"])
         if gdf.crs is None:
             gdf = gdf.set_crs("EPSG:4326")
         # Project to a metric CRS for accurate area computation.
-        gdf_metric = gdf.to_crs(gdf.estimate_utm_crs())
+        gdf_metric = self._to_metric(gdf, params.target_crs)
         gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
 
         # Join residents / living_area from statistical_units when not pre-joined.
@@ -547,11 +589,66 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     def hazard_ma_pipeline(self, exec_body: dict) -> dict:
         """Steps 3.1-3.2: Concentric buffer flood intersection + log-normal CDF → HMA.
 
+        Reads buildings, streets, and the combined flood_layers input.  Filters
+        flood features to those matching ``hazard_params.ma_flood_level_cm``
+        (default 30 cm), then calls ``run_hazard_ma_pipeline``.
+
         Returns:
             dict with key: hazard_mobility_accessibility
             (one value per building, keyed by building id).
         """
-        raise NotImplementedError
+        inputs: dict = exec_body["inputs"]
+        buildings_fc: dict = inputs["buildings"]
+        streets_fc: dict = inputs["streets"]
+        flood_layers_fc: dict = inputs["flood_layers"]
+        params = PipelineParams.model_validate(inputs.get("params", {}))
+
+        # Parse buildings → GeoDataFrame, project to metric CRS.
+        buildings_gdf = gpd.GeoDataFrame.from_features(buildings_fc["features"])
+        if buildings_gdf.crs is None:
+            buildings_gdf = buildings_gdf.set_crs("EPSG:4326")
+        buildings_metric = self._to_metric(buildings_gdf, params.target_crs)
+        if "id" in buildings_metric.columns:
+            buildings_metric = buildings_metric.set_index("id")
+
+        # Parse streets → same projected CRS (derive from buildings when auto).
+        streets_gdf = gpd.GeoDataFrame.from_features(streets_fc["features"])
+        if streets_gdf.crs is None:
+            streets_gdf = streets_gdf.set_crs("EPSG:4326")
+        streets_metric = self._to_metric(streets_gdf, params.target_crs, buildings_gdf)
+
+        # Filter flood features to the configured MA depth class.
+        ma_level = params.hazard.ma_flood_level_cm
+        ma_features = [
+            f
+            for f in flood_layers_fc["features"]
+            if f.get("properties", {}).get("level_cm") == ma_level
+        ]
+        if not ma_features:
+            available = sorted(
+                {
+                    f.get("properties", {}).get("level_cm")
+                    for f in flood_layers_fc["features"]
+                }
+            )
+            raise ValueError(
+                f"No flood features found with level_cm={ma_level} in "
+                f"'flood_layers'. Available levels: {available}"
+            )
+        flood_gdf = gpd.GeoDataFrame.from_features(ma_features)
+        if flood_gdf.crs is None:
+            flood_gdf = flood_gdf.set_crs("EPSG:4326")
+        flood_metric = self._to_metric(flood_gdf, params.target_crs, buildings_gdf)
+
+        result_df = run_hazard_ma_pipeline(
+            buildings_metric, streets_metric, flood_metric, params.hazard
+        )
+
+        return {
+            HAZARD_MOBILITY_ACCESSIBILITY: result_df[HAZARD_MOBILITY_ACCESSIBILITY]
+            .where(result_df[HAZARD_MOBILITY_ACCESSIBILITY].notna(), other=None)
+            .to_dict()
+        }
 
     # ------------------------------------------------------------------
     # Gather / merge
