@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layers-schema.json",
+  "title": "Flood Layers \u2014 Combined Depth Classes",
+  "description": "Combined flooded-area FeatureCollection containing features from all water-depth classes. Each feature must carry a 'level_cm' property identifying its depth class (e.g. 20, 30, \u2026 100 cm). Used by the well-being hazard pipeline (all depth levels, Steps 4.1\u20134.2) and the mobility & accessibility hazard pipeline (single depth level, default 30 cm, Steps 3.1\u20133.2).",
+  "type": "object",
+  "properties": {
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "geometry", "properties"],
+        "properties": {
+          "geometry": {
+            "oneOf": [
+              { "$ref": "https://geojson.org/schema/Polygon.json" },
+              { "$ref": "https://geojson.org/schema/MultiPolygon.json" }
+            ]
+          },
+          "properties": {
+            "type": "object",
+            "required": ["level_cm"],
+            "properties": {
+              "level_cm": {
+                "type": "integer",
+                "minimum": 20,
+                "maximum": 100,
+                "multipleOf": 10,
+                "description": "Water depth class this feature represents [cm]"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
