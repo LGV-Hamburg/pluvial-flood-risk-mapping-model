@@ -360,9 +360,9 @@ Validierte Parameterklassen mit Paper-Defaults:
 
 - `VulnerabilityWeights` — Gewichte für C (0.7), ES (0.3), WR (0.5), EDQ (0.5), Sensitivity (0.5), Coping Capacity (0.5); `apply_entropy: bool = True`
 - `FloodSensitivityParams` — `threshold_fraction: float = 0.25`, `exponent: int = 2`
-- `HazardParams` — Pufferweiten 5/15/30/2 m, `min_street_flood_area_m2: float = 4.0`, `lognormal_shape: float = 0.25`
+- `HazardParams` — Pufferweiten 5/15/30/2 m, `min_street_flood_area_m2: float = 4.0`, `lognormal_shape: float = 0.25`, `ma_flood_level_cm: int = 30`
 - `RiskWeights` — Exponenten a, b, c (Standard: 1.0)
-- `PipelineParams` — aggregiert alle obigen Klassen
+- `PipelineParams` — aggregiert alle obigen Klassen; enthält `target_crs: str | None = None` (siehe unten)
 
 ---
 
@@ -512,6 +512,55 @@ Eingangsdaten kommen in Produktion von einer OGC API Processes-Schnittstelle. Te
 - `sample_buildings_gdf` — GeoDataFrame aus `Building_ExampleLayer.csv`
 - `minimal_buildings_gdf` — 3-Gebäude-GDF für schnelle Unit-Tests
 - `default_pipeline_params` — `PipelineParams` mit Paper-Defaults
+
+## Koordinatensystem-Handling (CRS-Strategie)
+
+GeoJSON ist laut RFC 7946 auf WGS84 (EPSG:4326, geografische Koordinaten in Grad) festgelegt. OGC API Features Part 2 (CRS) erlaubt jedoch auch andere CRS — z. B. lokale projizierte Systeme — via Content-Crs-Header im HTTP-Response. Da unsere Pipeline räumliche Berechnungen durchführt (Puffer in Metern, Flächenanteil), muss intern mit einem **projizierten, metrischen CRS** gearbeitet werden.
+
+### Auflösungsreihenfolge (`PipelineParams.target_crs`)
+
+| Szenario | Verhalten |
+|----------|-----------|
+| `target_crs = "EPSG:25832"` (explizit) | Alle Layer werden in diesen CRS reprojiziert |
+| `target_crs = None`, Input bereits projiziert | CRS des Inputs wird unverändert verwendet |
+| `target_crs = None`, Input geografisch (EPSG:4326) | Auto-Detect über `geopandas.estimate_utm_crs()` |
+
+### Implementierung
+
+**`PipelineParams.target_crs: str | None = None`** — optionaler EPSG-String (z. B. `"EPSG:25832"`).
+
+**`PluvialFloodRiskProcess._to_metric(gdf, target_crs, fallback_gdf)`** — zentraler Helfer in der Prozessschicht:
+
+```python
+@staticmethod
+def _to_metric(gdf, target_crs, fallback_gdf=None):
+    if target_crs is not None:
+        return gdf.to_crs(target_crs)             # explizit vorgegeben
+    if gdf.crs is not None and gdf.crs.is_projected:
+        return gdf                                 # schon metrisch
+    reference = gdf if not gdf.empty else fallback_gdf
+    return gdf.to_crs(reference.estimate_utm_crs()) # Auto-UTM
+```
+
+Alle drei räumlichen Branches (`exposure_pipeline`, `hazard_ma_pipeline`, künftig `hazard_wb_pipeline`) rufen `_to_metric()` auf. Der `fallback_gdf`-Parameter stellt sicher, dass leere Layer (z. B. ein leerer Flood-Layer) durch die Gebäudegeometrie geerdet werden.
+
+### OGC API: `target_crs` als Parameter
+
+Im `params`-Objekt der Prozessbeschreibung ist `target_crs` als optionaler String-Parameter dokumentiert:
+
+```json
+"target_crs": {
+  "type": "string",
+  "examples": ["EPSG:25832", "EPSG:32632"],
+  "description": "EPSG code for spatial calculations. Omit to auto-detect UTM."
+}
+```
+
+**Empfehlung für Nutzer:**
+- **Hamburg / Norddeutschland:** `EPSG:25832` (ETRS89 UTM-32N)
+- **Großbritannien:** `EPSG:27700` (British National Grid)
+- **Nordamerika (NYC):** `EPSG:2263` (NY State Plane)
+- **Unbekanntes Gebiet / WGS84-Input:** weglassen (Auto-UTM)
 
 ---
 
