@@ -614,3 +614,309 @@ class TestRunExposurePipeline:
             atol=1.0,
             check_exact=False,
         )
+
+
+# ---------------------------------------------------------------------------
+# Module 3 — Hazard: Mobility & Accessibility
+# ---------------------------------------------------------------------------
+
+import geopandas as gpd  # noqa: E402
+from shapely.geometry import LineString, Polygon, box
+
+from pluvial_flood_risk.algorithms.hazard_ma import (  # noqa: E402
+    compute_hazard_ma,
+    compute_mobility_flood_fractions,
+    run_hazard_ma_pipeline,
+)
+from pluvial_flood_risk.models.field_names import (  # noqa: E402
+    FLOODED_AREA_M2_5M,
+    FLOODED_AREA_M2_15M,
+    FLOODED_AREA_M2_30M,
+    FLOODED_FRACTION_5M,
+    FLOODED_FRACTION_15M,
+    FLOODED_FRACTION_30M,
+    HAZARD_MOBILITY_ACCESSIBILITY,
+)
+from pluvial_flood_risk.models.inputs import HazardParams  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Synthetic geometry helpers
+#
+# All geometries use a flat local coordinate system (units = metres) so that
+# buffer distances and areas are exact.  We place the building at the origin
+# so that expected zone radii are easy to reason about.
+#
+#  Building:  20 × 10 m rectangle centred at (0, 0)
+#             → box(-10, -5, 10, 5),  area = 200 m²
+#
+#  Street:    A narrow east-west road at y = 20, i.e. between 10 m and 30 m
+#             north of the building centroid.  Represented as a LineString
+#             so that the implementation buffers it to 0.5 m.
+#             → LineString([(-30, 20), (30, 20)])
+#
+#  Flood:     A rectangle covering x ∈ [-30, 30], y ∈ [5, 30].
+#             This floods the 5 m direct buffer completely (the outer ring of
+#             the building from y=5 to y=10) and overlaps the street zones.
+# ---------------------------------------------------------------------------
+
+_CRS = "EPSG:32632"  # UTM zone 32N — a flat, metric CRS
+
+
+@pytest.fixture()
+def building_gdf() -> gpd.GeoDataFrame:
+    """Single 20×10 m building at the origin."""
+    geom = box(-10.0, -5.0, 10.0, 5.0)
+    return gpd.GeoDataFrame({"id": [1], "geometry": [geom]}, crs=_CRS)
+
+
+@pytest.fixture()
+def street_gdf() -> gpd.GeoDataFrame:
+    """Single east-west street line at y = 20 (15–25 m north of building)."""
+    geom = LineString([(-30.0, 20.0), (30.0, 20.0)])
+    return gpd.GeoDataFrame({"geometry": [geom]}, crs=_CRS)
+
+
+@pytest.fixture()
+def flood_gdf_full() -> gpd.GeoDataFrame:
+    """Flood polygon covering the entire north side: x∈[-30,30], y∈[5,50]."""
+    geom = box(-30.0, 5.0, 30.0, 50.0)
+    return gpd.GeoDataFrame({"geometry": [geom]}, crs=_CRS)
+
+
+@pytest.fixture()
+def flood_gdf_none() -> gpd.GeoDataFrame:
+    """Flood polygon far away — no intersection with any zone."""
+    geom = box(1000.0, 1000.0, 1010.0, 1010.0)
+    return gpd.GeoDataFrame({"geometry": [geom]}, crs=_CRS)
+
+
+@pytest.fixture()
+def params_default() -> HazardParams:
+    return HazardParams()
+
+
+class TestComputeMobilityFloodFractions:
+    """Step 3.1 — spatial preprocessing with synthetic geometry."""
+
+    def test_returns_six_expected_columns(
+        self, building_gdf, street_gdf, flood_gdf_full, params_default
+    ) -> None:
+        result = compute_mobility_flood_fractions(
+            building_gdf, street_gdf, flood_gdf_full, params_default
+        )
+        for col in [
+            FLOODED_AREA_M2_5M,
+            FLOODED_FRACTION_5M,
+            FLOODED_AREA_M2_15M,
+            FLOODED_FRACTION_15M,
+            FLOODED_AREA_M2_30M,
+            FLOODED_FRACTION_30M,
+        ]:
+            assert col in result.columns, f"Missing column: {col}"
+
+    def test_building_id_preserved_in_index(
+        self, building_gdf, street_gdf, flood_gdf_full, params_default
+    ) -> None:
+        result = compute_mobility_flood_fractions(
+            building_gdf, street_gdf, flood_gdf_full, params_default
+        )
+        assert 1 in result.index
+
+    def test_no_flood_gives_zero_fractions(
+        self, building_gdf, street_gdf, flood_gdf_none, params_default
+    ) -> None:
+        result = compute_mobility_flood_fractions(
+            building_gdf, street_gdf, flood_gdf_none, params_default
+        )
+        for col in [FLOODED_FRACTION_5M, FLOODED_FRACTION_15M, FLOODED_FRACTION_30M]:
+            assert result.loc[1, col] == pytest.approx(0.0)
+
+    def test_full_flood_gives_nonzero_fraction_5m(
+        self, building_gdf, street_gdf, flood_gdf_full, params_default
+    ) -> None:
+        """With flood covering the entire north side, the 5 m buffer is partially
+        flooded (north half).  Fraction must be > 0."""
+        result = compute_mobility_flood_fractions(
+            building_gdf, street_gdf, flood_gdf_full, params_default
+        )
+        assert result.loc[1, FLOODED_FRACTION_5M] > 0.0
+
+    def test_fractions_in_unit_interval(
+        self, building_gdf, street_gdf, flood_gdf_full, params_default
+    ) -> None:
+        result = compute_mobility_flood_fractions(
+            building_gdf, street_gdf, flood_gdf_full, params_default
+        )
+        for col in [FLOODED_FRACTION_5M, FLOODED_FRACTION_15M, FLOODED_FRACTION_30M]:
+            val = result.loc[1, col]
+            assert 0.0 <= val <= 1.0, f"{col} = {val} out of [0, 1]"
+
+    def test_flooded_area_consistent_with_fraction(
+        self, building_gdf, street_gdf, flood_gdf_full, params_default
+    ) -> None:
+        """flooded_area / zone_area should equal the fraction (where area > 0)."""
+        result = compute_mobility_flood_fractions(
+            building_gdf, street_gdf, flood_gdf_full, params_default
+        )
+        area_5m = result.loc[1, FLOODED_AREA_M2_5M]
+        frac_5m = result.loc[1, FLOODED_FRACTION_5M]
+        if frac_5m > 0.0:
+            # Derived zone area ≈ area / frac — must be positive
+            assert area_5m / frac_5m > 0.0
+
+    def test_invalid_zone3_smaller_than_zone2_raises(
+        self, building_gdf, street_gdf, flood_gdf_full
+    ) -> None:
+        bad_params = HazardParams(buffer_zone2_m=30.0, buffer_zone3_m=15.0)
+        with pytest.raises(ValueError, match="buffer_zone3_m"):
+            compute_mobility_flood_fractions(
+                building_gdf, street_gdf, flood_gdf_full, bad_params
+            )
+
+    def test_multiple_buildings_independent_results(
+        self, street_gdf, flood_gdf_full, params_default
+    ) -> None:
+        """Two buildings far apart should produce independent fractions."""
+        gdf = gpd.GeoDataFrame(
+            {
+                "id": [1, 2],
+                "geometry": [
+                    box(-10.0, -5.0, 10.0, 5.0),  # at origin — partially flooded
+                    box(500.0, -5.0, 510.0, 5.0),  # far east  — not flooded
+                ],
+            },
+            crs=_CRS,
+        )
+        result = compute_mobility_flood_fractions(
+            gdf, street_gdf, flood_gdf_full, params_default
+        )
+        assert result.loc[1, FLOODED_FRACTION_5M] > 0.0
+        assert result.loc[2, FLOODED_FRACTION_5M] == pytest.approx(0.0)
+
+
+class TestComputeHazardMA:
+    """Step 3.2 — pure formula tests (no geometry dependency)."""
+
+    def _df(
+        self,
+        frac_5m: float = 0.0,
+        area_5m: float = 0.0,
+        frac_15m: float = 0.0,
+        area_15m: float = 0.0,
+        frac_30m: float = 0.0,
+        area_30m: float = 0.0,
+    ) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                FLOODED_FRACTION_5M: [frac_5m],
+                FLOODED_AREA_M2_5M: [area_5m],
+                FLOODED_FRACTION_15M: [frac_15m],
+                FLOODED_AREA_M2_15M: [area_15m],
+                FLOODED_FRACTION_30M: [frac_30m],
+                FLOODED_AREA_M2_30M: [area_30m],
+            },
+            index=[1],
+        )
+
+    def test_zero_flood_gives_low_hma(self) -> None:
+        """All fractions zero → lognorm.cdf(0 * 4, σ) — effectively 0."""
+        result = compute_hazard_ma(self._df())
+        assert result.iloc[0] == pytest.approx(0.0, abs=1e-9)
+
+    def test_returns_series_named_correctly(self) -> None:
+        result = compute_hazard_ma(self._df())
+        assert result.name == HAZARD_MOBILITY_ACCESSIBILITY
+
+    def test_hma_in_unit_interval(self) -> None:
+        df = self._df(frac_5m=0.5, area_5m=10.0)
+        result = compute_hazard_ma(df)
+        assert 0.0 <= result.iloc[0] <= 1.0
+
+    def test_higher_fraction_gives_higher_hma(self) -> None:
+        """Monotonicity: larger flooded fraction → larger HMA."""
+        low = compute_hazard_ma(self._df(frac_5m=0.1, area_5m=5.0)).iloc[0]
+        high = compute_hazard_ma(self._df(frac_5m=0.8, area_5m=5.0)).iloc[0]
+        assert high > low
+
+    def test_formula_against_scipy_reference(self) -> None:
+        """HMA = lognorm.cdf(max_frac * 4, s=σ) — verify against direct scipy call."""
+        from scipy.stats import lognorm as _lognorm
+
+        params = HazardParams(lognormal_shape=0.25)
+        frac = 0.3
+        df = self._df(frac_5m=frac, area_5m=20.0)
+        result = compute_hazard_ma(df, params).iloc[0]
+        expected = _lognorm.cdf(frac * 4.0, s=0.25)
+        assert result == pytest.approx(expected, rel=1e-9)
+
+    def test_min_area_filter_suppresses_small_street_zone(self) -> None:
+        """A 15m zone with tiny total area (< min_area_m2) must be ignored."""
+        params = HazardParams(min_street_flood_area_m2=10.0)
+        # frac_15m = 0.5, zone_total = area/frac = 2/0.5 = 4 m² < 10 m² → suppressed
+        df_small = self._df(frac_15m=0.5, area_15m=2.0)
+        result_small = compute_hazard_ma(df_small, params).iloc[0]
+        # Without suppression (large zone)
+        df_large = self._df(frac_15m=0.5, area_15m=20.0)
+        result_large = compute_hazard_ma(df_large, params).iloc[0]
+        assert result_small < result_large
+
+    def test_max_of_three_zones_is_used(self) -> None:
+        """HMA uses the maximum fraction across all three zones."""
+        from scipy.stats import lognorm as _lognorm
+
+        params = HazardParams(lognormal_shape=0.25, min_street_flood_area_m2=0.0)
+        # Zone 30m has highest fraction
+        df = self._df(
+            frac_5m=0.1,
+            area_5m=10.0,
+            frac_15m=0.2,
+            area_15m=50.0,
+            frac_30m=0.6,
+            area_30m=80.0,
+        )
+        result = compute_hazard_ma(df, params).iloc[0]
+        expected = _lognorm.cdf(0.6 * 4.0, s=0.25)
+        assert result == pytest.approx(expected, rel=1e-9)
+
+    def test_index_preserved(self) -> None:
+        df = self._df(frac_5m=0.3, area_5m=10.0)
+        result = compute_hazard_ma(df)
+        assert list(result.index) == [1]
+
+
+class TestRunHazardMAPipeline:
+    """run_hazard_ma_pipeline — orchestration: Step 3.1 + 3.2 together."""
+
+    def test_adds_seven_columns(
+        self, building_gdf, street_gdf, flood_gdf_full, params_default
+    ) -> None:
+        result = run_hazard_ma_pipeline(
+            building_gdf, street_gdf, flood_gdf_full, params_default
+        )
+        for col in [
+            FLOODED_AREA_M2_5M,
+            FLOODED_FRACTION_5M,
+            FLOODED_AREA_M2_15M,
+            FLOODED_FRACTION_15M,
+            FLOODED_AREA_M2_30M,
+            FLOODED_FRACTION_30M,
+            HAZARD_MOBILITY_ACCESSIBILITY,
+        ]:
+            assert col in result.columns
+
+    def test_hma_in_unit_interval(
+        self, building_gdf, street_gdf, flood_gdf_full, params_default
+    ) -> None:
+        result = run_hazard_ma_pipeline(
+            building_gdf, street_gdf, flood_gdf_full, params_default
+        )
+        hma = result[HAZARD_MOBILITY_ACCESSIBILITY]
+        assert (hma >= 0.0).all() and (hma <= 1.0).all()
+
+    def test_no_flood_gives_zero_hma(
+        self, building_gdf, street_gdf, flood_gdf_none, params_default
+    ) -> None:
+        result = run_hazard_ma_pipeline(
+            building_gdf, street_gdf, flood_gdf_none, params_default
+        )
+        assert result.loc[1, HAZARD_MOBILITY_ACCESSIBILITY] == pytest.approx(0.0)

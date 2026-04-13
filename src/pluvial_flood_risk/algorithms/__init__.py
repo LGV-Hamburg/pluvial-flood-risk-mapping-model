@@ -7,6 +7,11 @@ from .exposure import (
     compute_residents_per_building,
     run_exposure_pipeline,
 )
+from .hazard_ma import (
+    compute_hazard_ma,
+    compute_mobility_flood_fractions,
+    run_hazard_ma_pipeline,
+)
 from .topsis import topsis
 from .vulnerability import (
     compute_coping_capacity,
@@ -28,4 +33,7 @@ __all__ = [
     "compute_residents_ground_floor",
     "compute_exposure_mobility_accessibility",
     "run_exposure_pipeline",
+    "compute_mobility_flood_fractions",
+    "compute_hazard_ma",
+    "run_hazard_ma_pipeline",
 ]
