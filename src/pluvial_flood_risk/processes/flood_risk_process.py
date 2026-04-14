@@ -33,6 +33,7 @@ from pydantic import BaseModel
 
 from ..algorithms.exposure import run_exposure_pipeline
 from ..algorithms.hazard_ma import run_hazard_ma_pipeline
+from ..algorithms.hazard_wb import run_hazard_wb_pipeline
 from ..algorithms.vulnerability import run_vulnerability_pipeline
 from ..models.field_names import (
     BUILDING_FOOTPRINT_AREA_M2,
@@ -40,6 +41,7 @@ from ..models.field_names import (
     COPING_CAPACITY_INDEX,
     EXPOSURE_MOBILITY_ACCESSIBILITY,
     HAZARD_MOBILITY_ACCESSIBILITY,
+    HAZARD_WELL_BEING,
     LIVING_AREA_M2_STATISTICAL_UNIT,
     RESIDENTS_GROUND_FLOOR,
     RESIDENTS_IN_STATISTICAL_UNIT,
@@ -579,11 +581,42 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     def hazard_wb_pipeline(self, exec_body: dict) -> dict:
         """Steps 4.1-4.2: 2 m buffer flood intersection + log-normal CDF → HWB.
 
+        Reads buildings and the combined flood_layers input (all depth classes).
+        Passes all features to ``run_hazard_wb_pipeline`` which loops over each
+        ``level_cm`` depth class to compute per-building flooded fractions.
+
         Returns:
             dict with key: hazard_well_being
             (one value per building, keyed by building id).
         """
-        raise NotImplementedError
+        inputs: dict = exec_body["inputs"]
+        buildings_fc: dict = inputs["buildings"]
+        flood_layers_fc: dict = inputs["flood_layers"]
+        params = PipelineParams.model_validate(inputs.get("params", {}))
+
+        # Parse buildings → GeoDataFrame, project to metric CRS.
+        buildings_gdf = gpd.GeoDataFrame.from_features(buildings_fc["features"])
+        if buildings_gdf.crs is None:
+            buildings_gdf = buildings_gdf.set_crs("EPSG:4326")
+        buildings_metric = self._to_metric(buildings_gdf, params.target_crs)
+        if "id" in buildings_metric.columns:
+            buildings_metric = buildings_metric.set_index("id")
+
+        # Parse all flood depth classes → same projected CRS.
+        flood_gdf = gpd.GeoDataFrame.from_features(flood_layers_fc["features"])
+        if flood_gdf.crs is None:
+            flood_gdf = flood_gdf.set_crs("EPSG:4326")
+        flood_metric = self._to_metric(flood_gdf, params.target_crs, buildings_gdf)
+
+        result_df = run_hazard_wb_pipeline(
+            buildings_metric, flood_metric, params.hazard
+        )
+
+        return {
+            HAZARD_WELL_BEING: result_df[HAZARD_WELL_BEING]
+            .where(result_df[HAZARD_WELL_BEING].notna(), other=None)
+            .to_dict()
+        }
 
     @parallel_step
     def hazard_ma_pipeline(self, exec_body: dict) -> dict:
