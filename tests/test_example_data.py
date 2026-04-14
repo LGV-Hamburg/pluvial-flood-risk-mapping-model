@@ -62,6 +62,12 @@ from pluvial_flood_risk.algorithms.hazard_ma import (
     compute_hazard_ma,
     run_hazard_ma_pipeline,
 )
+from pluvial_flood_risk.algorithms.hazard_wb import (
+    compute_hazard_wb,
+    flooded_area_col,
+    flooded_fraction_col,
+    run_hazard_wb_pipeline,
+)
 from pluvial_flood_risk.algorithms.vulnerability import run_vulnerability_pipeline
 from pluvial_flood_risk.models.field_names import (
     BUILDING_FOOTPRINT_AREA_M2,
@@ -76,6 +82,7 @@ from pluvial_flood_risk.models.field_names import (
     FLOODED_FRACTION_30M,
     FLOORS_ABOVE_GROUND,
     HAZARD_MOBILITY_ACCESSIBILITY,
+    HAZARD_WELL_BEING,
     RESIDENTS_GROUND_FLOOR,
     RESIDENTS_PER_BUILDING,
     SENSITIVITY_INDEX,
@@ -648,4 +655,199 @@ class TestHazardMASpatial:
             no_area_but_frac = (area == 0.0) & (frac > 0.0)
             assert not no_area_but_frac.any(), (
                 f"Non-zero fraction with zero area in {area_col}/{frac_col}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# 4. Hazard WB — formula regression (pure math, CRS-independent)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def hazard_wb_result(
+    buildings_gdf: gpd.GeoDataFrame,
+    flood_all_gdf: gpd.GeoDataFrame,
+) -> pd.DataFrame:
+    """Output of the full hazard-WB pipeline on the example data."""
+    params = HazardParams()
+    return run_hazard_wb_pipeline(buildings_gdf, flood_all_gdf, params)
+
+
+@pytest.mark.regression
+class TestHazardWBFormula:
+    """Verify Eq. 12 (HWB) by feeding ArcPy flood fractions into compute_hazard_wb.
+
+    This completely bypasses the spatial step, so CRS / buffer differences
+    between ArcPy and our pipeline do not affect the result.  All 37 example
+    buildings should match the original HWB output to < 1 % relative error.
+    """
+
+    @pytest.fixture(scope="class")
+    def formula_result(self, expected: gpd.GeoDataFrame) -> pd.Series:
+        depth_classes = [20, 30, 40, 50, 60, 70, 80, 90, 100]
+        df = pd.DataFrame(index=expected.index)
+        for d in depth_classes:
+            p_col = f"P2Flood_{d}"
+            a_col = f"A2Flood_{d}"
+            if p_col in expected.columns:
+                df[flooded_fraction_col(d)] = expected[p_col].fillna(0.0) / 100.0
+                df[flooded_area_col(d)] = expected[a_col].fillna(0.0)
+            else:
+                df[flooded_fraction_col(d)] = 0.0
+                df[flooded_area_col(d)] = 0.0
+        return compute_hazard_wb(df, HazardParams())
+
+    def test_all_buildings_present(
+        self, formula_result: pd.Series, expected: gpd.GeoDataFrame
+    ) -> None:
+        assert set(formula_result.index) == set(expected.index)
+
+    def test_no_nan_in_result(self, formula_result: pd.Series) -> None:
+        assert not formula_result.isna().any()
+
+    def test_hwb_non_negative(self, formula_result: pd.Series) -> None:
+        assert (formula_result >= 0.0).all()
+
+    def test_building1_matches_expected(
+        self, formula_result: pd.Series, expected: gpd.GeoDataFrame
+    ) -> None:
+        """Building 1 has all depth classes heavily flooded; HWB ≈ 6.9987."""
+        bid = expected.index[0]
+        assert formula_result.loc[bid] == pytest.approx(
+            expected.loc[bid, "HWB"], rel=1e-4
+        )
+
+    def test_all_buildings_match_within_1pct(
+        self, formula_result: pd.Series, expected: gpd.GeoDataFrame
+    ) -> None:
+        """All 37 buildings should match ArcPy HWB to < 1 % relative error."""
+        for bid in expected.index:
+            exp_hwb = float(expected.loc[bid, "HWB"])
+            our_hwb = float(formula_result.loc[bid])
+            if abs(exp_hwb) < 1e-10:
+                assert abs(our_hwb) < 1e-10, (
+                    f"Building {bid}: expected near-zero HWB but got {our_hwb}"
+                )
+            else:
+                assert our_hwb == pytest.approx(exp_hwb, rel=0.01), (
+                    f"Building {bid}: expected {exp_hwb:.6f}, got {our_hwb:.6f}"
+                )
+
+    def test_zero_hwb_buildings_all_fractions_zero(
+        self, formula_result: pd.Series, expected: gpd.GeoDataFrame
+    ) -> None:
+        """Buildings with no flood data should produce HWB = 0."""
+        p_cols = [c for c in expected.columns if c.startswith("P2Flood_")]
+        no_flood = expected[expected[p_cols].isna().all(axis=1)].index
+        for bid in no_flood:
+            assert formula_result.loc[bid] == pytest.approx(0.0, abs=1e-10), (
+                f"Building {bid}: all fractions null but HWB = {formula_result.loc[bid]}"
+            )
+
+    def test_rank_order_preserved(
+        self, formula_result: pd.Series, expected: gpd.GeoDataFrame
+    ) -> None:
+        """Spearman rank correlation between formula HWB and expected HWB = 1.0."""
+        corr = formula_result.corr(expected["HWB"].astype(float), method="spearman")
+        assert corr == pytest.approx(1.0, abs=1e-6), (
+            f"Formula rank correlation dropped to {corr:.4f}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 5. Hazard WB — spatial regression (full pipeline)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.regression
+class TestHazardWBSpatial:
+    """Verify the full run_hazard_wb_pipeline against example data.
+
+    Because buffer / overlay operations differ slightly between ArcPy (Web
+    Mercator) and our EPSG:25832 pipeline, absolute fraction values can
+    differ.  Tests verify structural properties and rank-order correlation.
+    """
+
+    def test_all_buildings_present(
+        self,
+        hazard_wb_result: pd.DataFrame,
+        buildings_gdf: gpd.GeoDataFrame,
+    ) -> None:
+        assert set(hazard_wb_result.index) == set(buildings_gdf.index)
+
+    def test_no_nan_in_hwb(self, hazard_wb_result: pd.DataFrame) -> None:
+        assert not hazard_wb_result[HAZARD_WELL_BEING].isna().any()
+
+    def test_hwb_non_negative(self, hazard_wb_result: pd.DataFrame) -> None:
+        assert (hazard_wb_result[HAZARD_WELL_BEING] >= 0.0).all()
+
+    def test_fraction_columns_in_valid_range(
+        self, hazard_wb_result: pd.DataFrame
+    ) -> None:
+        """All flooded_fraction_2m_*cm columns must be in [0, 1]."""
+        frac_cols = [
+            c for c in hazard_wb_result.columns if c.startswith("flooded_fraction_2m_")
+        ]
+        assert len(frac_cols) > 0, "No fraction columns found in result"
+        for col in frac_cols:
+            col_data = hazard_wb_result[col]
+            assert (col_data >= 0.0).all(), f"Negative fraction in {col}"
+            assert (col_data <= 1.0 + 1e-6).all(), f"Fraction > 1 in {col}"
+
+    def test_area_columns_non_negative(self, hazard_wb_result: pd.DataFrame) -> None:
+        area_cols = [
+            c for c in hazard_wb_result.columns if c.startswith("flooded_area_m2_2m_")
+        ]
+        assert len(area_cols) > 0, "No area columns found in result"
+        for col in area_cols:
+            assert (hazard_wb_result[col] >= 0.0).all(), f"Negative area in {col}"
+
+    def test_zero_hwb_buildings_consistent_with_expected(
+        self,
+        hazard_wb_result: pd.DataFrame,
+        expected: gpd.GeoDataFrame,
+    ) -> None:
+        """Buildings with all-null P2Flood in ArcPy should also have near-zero HWB."""
+        p_cols = [c for c in expected.columns if c.startswith("P2Flood_")]
+        no_flood_ids = expected[expected[p_cols].isna().all(axis=1)].index
+        common = [bid for bid in no_flood_ids if bid in hazard_wb_result.index]
+        assert len(common) > 0, "No zero-flood buildings to test"
+        for bid in common:
+            hwb = hazard_wb_result.loc[bid, HAZARD_WELL_BEING]
+            assert hwb < 0.05, (
+                f"Building {bid}: expected near-zero HWB but got {hwb:.6f}"
+            )
+
+    def test_rank_order_correlates_with_expected(
+        self,
+        hazard_wb_result: pd.DataFrame,
+        expected: gpd.GeoDataFrame,
+    ) -> None:
+        """Spearman rank correlation between spatial HWB and expected HWB ≥ 0.7."""
+        common_ids = sorted(set(hazard_wb_result.index) & set(expected.index))
+        ours = hazard_wb_result.loc[common_ids, HAZARD_WELL_BEING]
+        exp_hwb = expected.loc[common_ids, "HWB"].astype(float)
+        corr = ours.corr(exp_hwb, method="spearman")
+        assert corr >= 0.7, (
+            f"Spearman rank correlation for spatial HWB is too low ({corr:.3f})"
+        )
+
+    def test_flood_fraction_area_consistency(
+        self, hazard_wb_result: pd.DataFrame
+    ) -> None:
+        """where fraction > 0, flooded area must also be > 0."""
+        frac_cols = [
+            c for c in hazard_wb_result.columns if c.startswith("flooded_fraction_2m_")
+        ]
+        for frac_col in frac_cols:
+            depth = frac_col.split("flooded_fraction_2m_")[1]  # e.g. "30cm"
+            area_col_name = f"flooded_area_m2_2m_{depth}"
+            if area_col_name not in hazard_wb_result.columns:
+                continue
+            frac = hazard_wb_result[frac_col]
+            area = hazard_wb_result[area_col_name]
+            assert (area >= 0.0).all(), f"Negative area in {area_col_name}"
+            no_area_but_frac = (area == 0.0) & (frac > 0.0)
+            assert not no_area_but_frac.any(), (
+                f"Non-zero fraction with zero area in {frac_col}/{area_col_name}"
             )
