@@ -628,6 +628,13 @@ from pluvial_flood_risk.algorithms.hazard_ma import (  # noqa: E402
     compute_mobility_flood_fractions,
     run_hazard_ma_pipeline,
 )
+from pluvial_flood_risk.algorithms.hazard_wb import (  # noqa: E402
+    compute_hazard_wb,
+    compute_wb_flood_fractions,
+    flooded_area_col,
+    flooded_fraction_col,
+    run_hazard_wb_pipeline,
+)
 from pluvial_flood_risk.models.field_names import (  # noqa: E402
     FLOODED_AREA_M2_5M,
     FLOODED_AREA_M2_15M,
@@ -636,6 +643,7 @@ from pluvial_flood_risk.models.field_names import (  # noqa: E402
     FLOODED_FRACTION_15M,
     FLOODED_FRACTION_30M,
     HAZARD_MOBILITY_ACCESSIBILITY,
+    HAZARD_WELL_BEING,
 )
 from pluvial_flood_risk.models.inputs import HazardParams  # noqa: E402
 
@@ -920,3 +928,266 @@ class TestRunHazardMAPipeline:
             building_gdf, street_gdf, flood_gdf_none, params_default
         )
         assert result.loc[1, HAZARD_MOBILITY_ACCESSIBILITY] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Module 4: Well-Being Hazard (Steps 4.1–4.2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def building_gdf_wb() -> gpd.GeoDataFrame:
+    """Single 20×10 m building at the origin."""
+    from shapely.geometry import box
+
+    return gpd.GeoDataFrame(
+        {"id": [1], "geometry": [box(-10, -5, 10, 5)]},
+        crs=_CRS,
+    ).set_index("id")
+
+
+@pytest.fixture
+def flood_30cm() -> gpd.GeoDataFrame:
+    """Flood polygon covering the 2 m buffer zone fully, depth 30 cm."""
+    from shapely.geometry import box
+
+    return gpd.GeoDataFrame(
+        {"level_cm": [30], "geometry": [box(-15, -10, 15, 10)]},
+        crs=_CRS,
+    )
+
+
+@pytest.fixture
+def flood_multi_depth() -> gpd.GeoDataFrame:
+    """Three depth classes (30, 60, 100 cm) each fully covering the buffer zone."""
+    from shapely.geometry import box
+
+    return gpd.GeoDataFrame(
+        {
+            "level_cm": [30, 60, 100],
+            "geometry": [box(-15, -10, 15, 10)] * 3,
+        },
+        crs=_CRS,
+    )
+
+
+@pytest.fixture
+def flood_no_overlap_wb() -> gpd.GeoDataFrame:
+    """Flood polygon far from the building — no intersection with buffer."""
+    from shapely.geometry import box
+
+    return gpd.GeoDataFrame(
+        {"level_cm": [30], "geometry": [box(1000, 1000, 2000, 2000)]},
+        crs=_CRS,
+    )
+
+
+class TestComputeWbFloodFractions:
+    """Unit tests for compute_wb_flood_fractions (Step 4.1)."""
+
+    def test_full_flood_gives_fraction_one(
+        self, building_gdf_wb, flood_30cm, params_default
+    ) -> None:
+        result = compute_wb_flood_fractions(building_gdf_wb, flood_30cm, params_default)
+        frac = result.loc[1, flooded_fraction_col(30)]
+        assert frac == pytest.approx(1.0, abs=1e-6)
+
+    def test_no_flood_gives_fraction_zero(
+        self, building_gdf_wb, flood_no_overlap_wb, params_default
+    ) -> None:
+        result = compute_wb_flood_fractions(
+            building_gdf_wb, flood_no_overlap_wb, params_default
+        )
+        assert result.loc[1, flooded_fraction_col(30)] == pytest.approx(0.0)
+
+    def test_multiple_depth_classes_produce_separate_columns(
+        self, building_gdf_wb, flood_multi_depth, params_default
+    ) -> None:
+        result = compute_wb_flood_fractions(
+            building_gdf_wb, flood_multi_depth, params_default
+        )
+        for d in [30, 60, 100]:
+            assert flooded_fraction_col(d) in result.columns
+            assert flooded_area_col(d) in result.columns
+
+    def test_all_buildings_present_when_no_flood(
+        self, building_gdf_wb, flood_no_overlap_wb, params_default
+    ) -> None:
+        result = compute_wb_flood_fractions(
+            building_gdf_wb, flood_no_overlap_wb, params_default
+        )
+        assert 1 in result.index
+
+    def test_fraction_non_negative(
+        self, building_gdf_wb, flood_30cm, params_default
+    ) -> None:
+        result = compute_wb_flood_fractions(building_gdf_wb, flood_30cm, params_default)
+        fracs = [result.loc[1, flooded_fraction_col(d)] for d in [30]]
+        assert all(f >= 0.0 for f in fracs)
+
+    def test_fraction_at_most_one(
+        self, building_gdf_wb, flood_multi_depth, params_default
+    ) -> None:
+        result = compute_wb_flood_fractions(
+            building_gdf_wb, flood_multi_depth, params_default
+        )
+        for d in [30, 60, 100]:
+            frac = result.loc[1, flooded_fraction_col(d)]
+            assert frac <= 1.0 + 1e-6
+
+    def test_flooded_area_consistent_with_fraction(
+        self, building_gdf_wb, flood_30cm, params_default
+    ) -> None:
+        """flooded_area > 0 iff fraction > 0."""
+        result = compute_wb_flood_fractions(building_gdf_wb, flood_30cm, params_default)
+        area = result.loc[1, flooded_area_col(30)]
+        frac = result.loc[1, flooded_fraction_col(30)]
+        assert (area > 0.0) == (frac > 0.0)
+
+    def test_missing_level_cm_raises(self, building_gdf_wb) -> None:
+        from shapely.geometry import box
+
+        bad_flood = gpd.GeoDataFrame({"geometry": [box(-15, -10, 15, 10)]}, crs=_CRS)
+        with pytest.raises(ValueError, match="level_cm"):
+            compute_wb_flood_fractions(building_gdf_wb, bad_flood)
+
+
+class TestComputeHazardWB:
+    """Unit tests for compute_hazard_wb (Step 4.2, Eq. 12)."""
+
+    def test_zero_fractions_gives_zero_hwb(self) -> None:
+        df = pd.DataFrame(
+            {flooded_fraction_col(30): [0.0], flooded_area_col(30): [0.0]},
+            index=[1],
+        )
+        result = compute_hazard_wb(df, HazardParams())
+        assert result.loc[1] == pytest.approx(0.0, abs=1e-10)
+
+    def test_full_fraction_one_depth_class(self) -> None:
+        """One depth class at fraction 1.0 → lognorm.cdf(4, 0.25)."""
+        from scipy.stats import lognorm as sp_lognorm
+
+        df = pd.DataFrame(
+            {flooded_fraction_col(30): [1.0], flooded_area_col(30): [100.0]},
+            index=[1],
+        )
+        result = compute_hazard_wb(df, HazardParams())
+        expected = sp_lognorm.cdf(4.0, s=0.25)
+        assert result.loc[1] == pytest.approx(expected, rel=1e-6)
+
+    def test_sum_over_three_depth_classes(self) -> None:
+        """Three independent depth classes sum their CDF contributions."""
+        from scipy.stats import lognorm as sp_lognorm
+
+        fracs = {30: 0.5, 60: 0.8, 100: 1.0}
+        df = pd.DataFrame(
+            {flooded_fraction_col(d): [f] for d, f in fracs.items()}
+            | {flooded_area_col(d): [1.0] for d in fracs},
+            index=[1],
+        )
+        result = compute_hazard_wb(df, HazardParams())
+        expected = sum(sp_lognorm.cdf(f * 4.0, s=0.25) for f in fracs.values())
+        assert result.loc[1] == pytest.approx(expected, rel=1e-6)
+
+    def test_result_name_is_hazard_well_being(self) -> None:
+        df = pd.DataFrame(
+            {flooded_fraction_col(30): [0.5], flooded_area_col(30): [50.0]},
+            index=[1],
+        )
+        result = compute_hazard_wb(df, HazardParams())
+        assert result.name == HAZARD_WELL_BEING
+
+    def test_hwb_monotone_with_fraction(self) -> None:
+        """Higher fraction → higher HWB (monotone)."""
+        fracs = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
+        df = pd.DataFrame(
+            {
+                flooded_fraction_col(30): fracs,
+                flooded_area_col(30): [f * 100 for f in fracs],
+            },
+            index=range(len(fracs)),
+        )
+        result = compute_hazard_wb(df, HazardParams())
+        hwb = result.values
+        assert all(hwb[i] <= hwb[i + 1] for i in range(len(hwb) - 1))
+
+    def test_no_fraction_columns_gives_zero(self) -> None:
+        """DataFrame with no fraction columns → HWB = 0 for all rows."""
+        df = pd.DataFrame({"some_other_col": [1.0, 2.0]}, index=[1, 2])
+        result = compute_hazard_wb(df, HazardParams())
+        assert (result == 0.0).all()
+
+    def test_hwb_increases_with_more_depth_classes(self) -> None:
+        """Adding a depth class with positive fraction increases HWB."""
+        df1 = pd.DataFrame(
+            {flooded_fraction_col(30): [0.5], flooded_area_col(30): [50.0]},
+            index=[1],
+        )
+        df2 = df1.copy()
+        df2[flooded_fraction_col(60)] = 0.5
+        df2[flooded_area_col(60)] = 50.0
+        hwb1 = compute_hazard_wb(df1, HazardParams()).loc[1]
+        hwb2 = compute_hazard_wb(df2, HazardParams()).loc[1]
+        assert hwb2 > hwb1
+
+    def test_manual_cross_check_example_building_1(self) -> None:
+        """Reproduce HWB for example building 1 using ArcPy percentages."""
+        from scipy.stats import lognorm as sp_lognorm
+
+        # P values from building_example_results.geojson, building 1 (in %):
+        example_pcts = {
+            30: 91.763395960635819,
+            40: 91.764768321029095,
+            50: 91.763396914733391,
+            60: 91.764317846146142,
+            70: 90.998250093922465,
+            80: 87.057066385638905,
+            90: 52.953823475712113,
+            100: 7.9097231023667458,
+        }
+        df = pd.DataFrame(
+            {flooded_fraction_col(d): [p / 100.0] for d, p in example_pcts.items()}
+            | {flooded_area_col(d): [1.0] for d in example_pcts},
+            index=[1],
+        )
+        result = compute_hazard_wb(df, HazardParams())
+        expected_hwb = 6.9986609884078179
+        assert result.loc[1] == pytest.approx(expected_hwb, rel=1e-4)
+
+
+class TestRunHazardWBPipeline:
+    """Unit tests for run_hazard_wb_pipeline (orchestration)."""
+
+    def test_output_contains_hazard_well_being_column(
+        self, building_gdf_wb, flood_multi_depth, params_default
+    ) -> None:
+        result = run_hazard_wb_pipeline(
+            building_gdf_wb, flood_multi_depth, params_default
+        )
+        assert HAZARD_WELL_BEING in result.columns
+
+    def test_output_contains_fraction_and_area_columns(
+        self, building_gdf_wb, flood_multi_depth, params_default
+    ) -> None:
+        result = run_hazard_wb_pipeline(
+            building_gdf_wb, flood_multi_depth, params_default
+        )
+        for d in [30, 60, 100]:
+            assert flooded_fraction_col(d) in result.columns
+            assert flooded_area_col(d) in result.columns
+
+    def test_hwb_in_valid_range_for_single_depth(
+        self, building_gdf_wb, flood_30cm, params_default
+    ) -> None:
+        result = run_hazard_wb_pipeline(building_gdf_wb, flood_30cm, params_default)
+        hwb = result.loc[1, HAZARD_WELL_BEING]
+        # Full fraction → lognorm.cdf(4, 0.25) ≈ 1.0; HWB ≤ N_depths
+        assert 0.0 <= hwb <= 1.0 + 1e-6
+
+    def test_no_flood_gives_zero_hwb(
+        self, building_gdf_wb, flood_no_overlap_wb, params_default
+    ) -> None:
+        result = run_hazard_wb_pipeline(
+            building_gdf_wb, flood_no_overlap_wb, params_default
+        )
+        assert result.loc[1, HAZARD_WELL_BEING] == pytest.approx(0.0, abs=1e-10)
