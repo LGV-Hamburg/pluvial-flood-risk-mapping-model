@@ -12,6 +12,13 @@ from .hazard_ma import (
     compute_mobility_flood_fractions,
     run_hazard_ma_pipeline,
 )
+from .hazard_wb import (
+    compute_hazard_wb,
+    compute_wb_flood_fractions,
+    flooded_area_col,
+    flooded_fraction_col,
+    run_hazard_wb_pipeline,
+)
 from .topsis import topsis
 from .vulnerability import (
     compute_coping_capacity,
@@ -36,4 +43,9 @@ __all__ = [
     "compute_mobility_flood_fractions",
     "compute_hazard_ma",
     "run_hazard_ma_pipeline",
+    "flooded_fraction_col",
+    "flooded_area_col",
+    "compute_wb_flood_fractions",
+    "compute_hazard_wb",
+    "run_hazard_wb_pipeline",
 ]
