@@ -68,6 +68,7 @@ from pluvial_flood_risk.algorithms.hazard_wb import (
     flooded_fraction_col,
     run_hazard_wb_pipeline,
 )
+from pluvial_flood_risk.algorithms.risk import compute_risk, run_risk_pipeline
 from pluvial_flood_risk.algorithms.vulnerability import run_vulnerability_pipeline
 from pluvial_flood_risk.models.field_names import (
     BUILDING_FOOTPRINT_AREA_M2,
@@ -83,6 +84,8 @@ from pluvial_flood_risk.models.field_names import (
     FLOORS_ABOVE_GROUND,
     HAZARD_MOBILITY_ACCESSIBILITY,
     HAZARD_WELL_BEING,
+    PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
+    PLUVIAL_FLOOD_RISK_WELL_BEING,
     RESIDENTS_GROUND_FLOOR,
     RESIDENTS_PER_BUILDING,
     SENSITIVITY_INDEX,
@@ -851,3 +854,205 @@ class TestHazardWBSpatial:
             assert not no_area_but_frac.any(), (
                 f"Non-zero fraction with zero area in {frac_col}/{area_col_name}"
             )
+
+
+# ---------------------------------------------------------------------------
+# 5 & 6. Risk pipeline (formula + structural regression)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.regression
+class TestRiskFormula:
+    """Verify Eq. 14/15 by feeding back-calculated component values.
+
+    All buildings in building_example_results.geojson have SV_PF = 0 due to
+    the known TOPSIS artefact (see module docstring).  The original PFR values
+    were computed with a correct (non-zero) vulnerability term which is no
+    longer stored.  We recover the implied SV_PF per building using:
+
+        SV_PF_implied = PFR / (E * H)            (where E, H > 0)
+
+    and then verify that feeding SV_PF_implied + E + H back into compute_risk
+    reproduces the stored PFR to floating-point precision.
+    """
+
+    @pytest.fixture(scope="class")
+    def implied_svpf_wb(self, expected: gpd.GeoDataFrame) -> pd.Series:
+        """Implied SV_PF back-calculated from PFR_WB / (EWB * HWB)."""
+        mask = (expected["EWB"] > 0) & (expected["HWB"] > 0) & (expected["PFR_WB"] > 0)
+        return expected.loc[mask, "PFR_WB"] / (
+            expected.loc[mask, "EWB"] * expected.loc[mask, "HWB"]
+        )
+
+    @pytest.fixture(scope="class")
+    def implied_svpf_ma(self, expected: gpd.GeoDataFrame) -> pd.Series:
+        """Implied SV_PF back-calculated from PFR_MA / (EMA * HMA)."""
+        mask = (expected["EMA"] > 0) & (expected["HMA"] > 0) & (expected["PFR_MA"] > 0)
+        return expected.loc[mask, "PFR_MA"] / (
+            expected.loc[mask, "EMA"] * expected.loc[mask, "HMA"]
+        )
+
+    def test_wb_and_ma_implied_svpf_are_equal(
+        self,
+        implied_svpf_wb: pd.Series,
+        implied_svpf_ma: pd.Series,
+    ) -> None:
+        """Confirms SV_PF is shared: same implied factor for both risk indices."""
+        common = sorted(set(implied_svpf_wb.index) & set(implied_svpf_ma.index))
+        assert len(common) > 0
+        for bid in common:
+            assert implied_svpf_wb.loc[bid] == pytest.approx(
+                implied_svpf_ma.loc[bid], rel=1e-6
+            ), (
+                f"Implied SV_PF mismatch for building {bid}: WB={implied_svpf_wb.loc[bid]:.8f} MA={implied_svpf_ma.loc[bid]:.8f}"
+            )
+
+    def test_formula_reproduces_pfr_wb(
+        self,
+        implied_svpf_wb: pd.Series,
+        expected: gpd.GeoDataFrame,
+    ) -> None:
+        """compute_risk(implied_SV_PF, EWB, HWB) == PFR_WB for all buildings."""
+        idx = implied_svpf_wb.index
+        sv = implied_svpf_wb
+        e = expected.loc[idx, "EWB"].astype(float)
+        h = expected.loc[idx, "HWB"].astype(float)
+        result = compute_risk(sv, e, h, PipelineParams().risk_weights)
+        for bid in idx:
+            assert result.loc[bid] == pytest.approx(
+                expected.loc[bid, "PFR_WB"], rel=1e-6
+            ), f"PFR_WB mismatch for building {bid}"
+
+    def test_formula_reproduces_pfr_ma(
+        self,
+        implied_svpf_ma: pd.Series,
+        expected: gpd.GeoDataFrame,
+    ) -> None:
+        """compute_risk(implied_SV_PF, EMA, HMA) == PFR_MA for all buildings."""
+        idx = implied_svpf_ma.index
+        sv = implied_svpf_ma
+        e = expected.loc[idx, "EMA"].astype(float)
+        h = expected.loc[idx, "HMA"].astype(float)
+        result = compute_risk(sv, e, h, PipelineParams().risk_weights)
+        for bid in idx:
+            assert result.loc[bid] == pytest.approx(
+                expected.loc[bid, "PFR_MA"], rel=1e-6
+            ), f"PFR_MA mismatch for building {bid}"
+
+    def test_zero_exposure_buildings_have_zero_pfr_wb(
+        self, expected: gpd.GeoDataFrame
+    ) -> None:
+        """Buildings with EWB=0 must have PFR_WB=0 (product rule)."""
+        no_ewb = expected[expected["EWB"] == 0]
+        assert len(no_ewb) > 0, "No zero-EWB buildings in example data"
+        assert (no_ewb["PFR_WB"] == 0.0).all()
+
+
+@pytest.fixture(scope="module")
+def risk_result(
+    buildings_gdf: gpd.GeoDataFrame,
+    flood_all_gdf: gpd.GeoDataFrame,
+    expected: gpd.GeoDataFrame,
+) -> pd.DataFrame:
+    """Run the full risk pipeline using our own component outputs.
+
+    SV_PF comes from our vulnerability pipeline (non-zero, unlike original).
+    E and H come from exposure and hazard pipelines respectively.
+    The fixture assembles a merged DataFrame that run_risk_pipeline expects.
+    """
+    params = PipelineParams()
+
+    vuln_df = run_vulnerability_pipeline(buildings_gdf, params.vulnerability)
+
+    from pluvial_flood_risk.algorithms.exposure import run_exposure_pipeline
+
+    exposure_df = run_exposure_pipeline(buildings_gdf)
+
+    from pluvial_flood_risk.algorithms.hazard_wb import run_hazard_wb_pipeline
+
+    hwb_df = run_hazard_wb_pipeline(buildings_gdf, flood_all_gdf, params.hazard)
+
+    from pluvial_flood_risk.algorithms.hazard_ma import run_hazard_ma_pipeline
+
+    flood_30 = flood_all_gdf[flood_all_gdf["level_cm"] == 30].copy()
+    streets_gdf = (
+        gpd.read_file(_DATA / "streets_example.geojson")
+        .set_crs("EPSG:4326")
+        .to_crs("EPSG:25832")
+    )
+    hma_df = run_hazard_ma_pipeline(buildings_gdf, streets_gdf, flood_30, params.hazard)
+
+    merged = pd.concat(
+        [
+            vuln_df[[SOCIAL_VULNERABILITY_FLOOD_POTENTIAL]],
+            exposure_df[[RESIDENTS_GROUND_FLOOR, EXPOSURE_MOBILITY_ACCESSIBILITY]],
+            hwb_df[[HAZARD_WELL_BEING]],
+            hma_df[[HAZARD_MOBILITY_ACCESSIBILITY]],
+        ],
+        axis=1,
+    )
+    return run_risk_pipeline(merged, params.risk_weights)
+
+
+@pytest.mark.regression
+class TestRiskPipelineStructural:
+    """Structural regression tests for the full risk pipeline on example data.
+
+    Absolute values are NOT compared against the stored PFR_* columns because
+    our SV_PF differs from the original (TOPSIS artefact — see module
+    docstring).  Tests verify invariants that must hold regardless of the
+    vulnerability magnitude.
+    """
+
+    def test_all_buildings_present(
+        self,
+        risk_result: pd.DataFrame,
+        buildings_gdf: gpd.GeoDataFrame,
+    ) -> None:
+        assert set(risk_result.index) == set(buildings_gdf.index)
+
+    def test_no_nan_in_pfr_wb(self, risk_result: pd.DataFrame) -> None:
+        assert not risk_result[PLUVIAL_FLOOD_RISK_WELL_BEING].isna().any()
+
+    def test_no_nan_in_pfr_ma(self, risk_result: pd.DataFrame) -> None:
+        assert not risk_result[PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY].isna().any()
+
+    def test_pfr_wb_non_negative(self, risk_result: pd.DataFrame) -> None:
+        assert (risk_result[PLUVIAL_FLOOD_RISK_WELL_BEING] >= 0.0).all()
+
+    def test_pfr_ma_non_negative(self, risk_result: pd.DataFrame) -> None:
+        assert (risk_result[PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY] >= 0.0).all()
+
+    def test_buildings_with_zero_hazard_have_zero_pfr_wb(
+        self,
+        risk_result: pd.DataFrame,
+        expected: gpd.GeoDataFrame,
+    ) -> None:
+        """Where the original HWB=0, our HWB should also be ~0 → PFR_WB ≈ 0."""
+        zero_hwb = expected[expected["HWB"] == 0.0].index
+        common = [bid for bid in zero_hwb if bid in risk_result.index]
+        assert len(common) > 0
+        for bid in common:
+            assert risk_result.loc[bid, PLUVIAL_FLOOD_RISK_WELL_BEING] < 0.01, (
+                f"Building {bid}: expected near-zero PFR_WB but got "
+                f"{risk_result.loc[bid, PLUVIAL_FLOOD_RISK_WELL_BEING]:.6e}"
+            )
+
+    def test_rank_order_pfr_wb_correlates_with_expected(
+        self,
+        risk_result: pd.DataFrame,
+        expected: gpd.GeoDataFrame,
+    ) -> None:
+        """Spearman rank correlation between our PFR_WB and expected PFR_WB ≥ 0.5.
+
+        A looser threshold than hazard tests because SV_PF differs from the
+        original, which can reorder buildings with similar hazard but different
+        vulnerability.
+        """
+        common = sorted(set(risk_result.index) & set(expected.index))
+        ours = risk_result.loc[common, PLUVIAL_FLOOD_RISK_WELL_BEING]
+        exp = expected.loc[common, "PFR_WB"].astype(float)
+        corr = ours.corr(exp, method="spearman")
+        assert corr >= 0.5, (
+            f"Spearman rank correlation for PFR_WB is too low ({corr:.3f})"
+        )

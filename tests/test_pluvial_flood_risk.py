@@ -1191,3 +1191,195 @@ class TestRunHazardWBPipeline:
             building_gdf_wb, flood_no_overlap_wb, params_default
         )
         assert result.loc[1, HAZARD_WELL_BEING] == pytest.approx(0.0, abs=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Module 5: Risk Calculation (Step 5, Eq. 14/15)
+# ---------------------------------------------------------------------------
+
+from pluvial_flood_risk.algorithms.risk import (  # noqa: E402
+    compute_risk,
+    run_risk_pipeline,
+)
+from pluvial_flood_risk.models.field_names import (  # noqa: E402
+    EXPOSURE_MOBILITY_ACCESSIBILITY,
+    HAZARD_MOBILITY_ACCESSIBILITY,
+    PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
+    PLUVIAL_FLOOD_RISK_WELL_BEING,
+    SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
+)
+from pluvial_flood_risk.models.inputs import RiskWeights  # noqa: E402
+
+
+def _risk_df(**kwargs) -> pd.DataFrame:
+    """Build a minimal one-row or multi-row risk DataFrame."""
+    defaults = {
+        SOCIAL_VULNERABILITY_FLOOD_POTENTIAL: [1.0],
+        RESIDENTS_GROUND_FLOOR: [1.0],
+        EXPOSURE_MOBILITY_ACCESSIBILITY: [1.0],
+        HAZARD_WELL_BEING: [1.0],
+        HAZARD_MOBILITY_ACCESSIBILITY: [1.0],
+    }
+    defaults.update(kwargs)
+    return pd.DataFrame(defaults, index=[1])
+
+
+class TestComputeRisk:
+    """Unit tests for compute_risk (the core Eq. 14/15 formula)."""
+
+    def test_all_ones_default_exponents_gives_one(self) -> None:
+        sv = pd.Series([1.0], index=[1])
+        e = pd.Series([1.0], index=[1])
+        h = pd.Series([1.0], index=[1])
+        assert compute_risk(sv, e, h, RiskWeights()).iloc[0] == pytest.approx(1.0)
+
+    def test_zero_svpf_gives_zero(self) -> None:
+        sv = pd.Series([0.0], index=[1])
+        e = pd.Series([5.0], index=[1])
+        h = pd.Series([2.0], index=[1])
+        assert compute_risk(sv, e, h, RiskWeights()).iloc[0] == pytest.approx(0.0)
+
+    def test_zero_exposure_gives_zero(self) -> None:
+        sv = pd.Series([0.5], index=[1])
+        e = pd.Series([0.0], index=[1])
+        h = pd.Series([2.0], index=[1])
+        assert compute_risk(sv, e, h, RiskWeights()).iloc[0] == pytest.approx(0.0)
+
+    def test_zero_hazard_gives_zero(self) -> None:
+        sv = pd.Series([0.5], index=[1])
+        e = pd.Series([3.0], index=[1])
+        h = pd.Series([0.0], index=[1])
+        assert compute_risk(sv, e, h, RiskWeights()).iloc[0] == pytest.approx(0.0)
+
+    def test_unweighted_product(self) -> None:
+        """With default exponents (all 1): PFR = SV_PF * E * H."""
+        sv = pd.Series([0.5], index=[1])
+        e = pd.Series([4.0], index=[1])
+        h = pd.Series([3.0], index=[1])
+        result = compute_risk(sv, e, h, RiskWeights())
+        assert result.iloc[0] == pytest.approx(0.5 * 4.0 * 3.0)
+
+    def test_custom_exponents(self) -> None:
+        """PFR = SV_PF^0.5 * E^0.3 * H^0.2."""
+        params = RiskWeights(
+            vulnerability_exponent=0.5, exposure_exponent=0.3, hazard_exponent=0.2
+        )
+        sv = pd.Series([4.0], index=[1])
+        e = pd.Series([8.0], index=[1])
+        h = pd.Series([2.0], index=[1])
+        expected = (4.0**0.5) * (8.0**0.3) * (2.0**0.2)
+        assert compute_risk(sv, e, h, params).iloc[0] == pytest.approx(expected)
+
+    def test_negative_values_clipped_to_zero(self) -> None:
+        """Floating-point negatives near zero must not produce NaN or errors."""
+        sv = pd.Series([-1e-15], index=[1])
+        e = pd.Series([3.0], index=[1])
+        h = pd.Series([2.0], index=[1])
+        result = compute_risk(sv, e, h, RiskWeights())
+        assert result.iloc[0] == pytest.approx(0.0)
+
+    def test_multiple_buildings(self) -> None:
+        """Vector input: correct element-wise product."""
+        sv = pd.Series([0.2, 0.8], index=[1, 2])
+        e = pd.Series([5.0, 2.0], index=[1, 2])
+        h = pd.Series([1.0, 3.0], index=[1, 2])
+        result = compute_risk(sv, e, h, RiskWeights())
+        assert result.loc[1] == pytest.approx(0.2 * 5.0 * 1.0)
+        assert result.loc[2] == pytest.approx(0.8 * 2.0 * 3.0)
+
+    def test_index_preserved(self) -> None:
+        idx = [10, 20, 30]
+        sv = pd.Series([1.0, 2.0, 3.0], index=idx)
+        e = pd.Series([1.0, 1.0, 1.0], index=idx)
+        h = pd.Series([1.0, 1.0, 1.0], index=idx)
+        result = compute_risk(sv, e, h, RiskWeights())
+        assert list(result.index) == idx
+
+
+class TestRunRiskPipeline:
+    """Unit tests for run_risk_pipeline (Eq. 14/15 orchestration)."""
+
+    def test_output_contains_both_risk_columns(self) -> None:
+        df = _risk_df()
+        result = run_risk_pipeline(df, RiskWeights())
+        assert PLUVIAL_FLOOD_RISK_WELL_BEING in result.columns
+        assert PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY in result.columns
+
+    def test_input_columns_preserved(self) -> None:
+        df = _risk_df()
+        result = run_risk_pipeline(df, RiskWeights())
+        for col in df.columns:
+            assert col in result.columns
+
+    def test_wb_uses_residents_ground_floor_and_hwb(self) -> None:
+        """PFR_WB = SV_PF * EWB * HWB."""
+        df = _risk_df(
+            **{
+                SOCIAL_VULNERABILITY_FLOOD_POTENTIAL: [0.4],
+                RESIDENTS_GROUND_FLOOR: [3.0],
+                HAZARD_WELL_BEING: [2.5],
+                EXPOSURE_MOBILITY_ACCESSIBILITY: [999.0],  # must not affect WB
+                HAZARD_MOBILITY_ACCESSIBILITY: [999.0],    # must not affect WB
+            }
+        )
+        result = run_risk_pipeline(df, RiskWeights())
+        assert result.loc[1, PLUVIAL_FLOOD_RISK_WELL_BEING] == pytest.approx(
+            0.4 * 3.0 * 2.5
+        )
+        # MA path must not be polluted by WB inputs
+        assert result.loc[1, PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY] == pytest.approx(
+            0.4 * 999.0 * 999.0
+        )
+
+    def test_ma_uses_ema_and_hma(self) -> None:
+        """PFR_MA = SV_PF * EMA * HMA."""
+        df = _risk_df(
+            **{
+                SOCIAL_VULNERABILITY_FLOOD_POTENTIAL: [0.6],
+                EXPOSURE_MOBILITY_ACCESSIBILITY: [10.0],
+                HAZARD_MOBILITY_ACCESSIBILITY: [0.5],
+                RESIDENTS_GROUND_FLOOR: [999.0],           # must not affect MA
+                HAZARD_WELL_BEING: [999.0],                # must not affect MA
+            }
+        )
+        result = run_risk_pipeline(df, RiskWeights())
+        assert result.loc[1, PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY] == pytest.approx(
+            0.6 * 10.0 * 0.5
+        )
+
+    def test_wb_uses_same_svpf_as_ma(self) -> None:
+        """SV_PF is shared — the vulnerability factor is the same for both indices."""
+        df = _risk_df(
+            **{
+                SOCIAL_VULNERABILITY_FLOOD_POTENTIAL: [0.7],
+                RESIDENTS_GROUND_FLOOR: [2.0],
+                HAZARD_WELL_BEING: [1.5],
+                EXPOSURE_MOBILITY_ACCESSIBILITY: [4.0],
+                HAZARD_MOBILITY_ACCESSIBILITY: [0.8],
+            }
+        )
+        result = run_risk_pipeline(df, RiskWeights())
+        pfr_wb = result.loc[1, PLUVIAL_FLOOD_RISK_WELL_BEING]
+        pfr_ma = result.loc[1, PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY]
+        # Both share SV_PF=0.7 → ratio equals (EWB*HWB)/(EMA*HMA)
+        assert pfr_wb / pfr_ma == pytest.approx((2.0 * 1.5) / (4.0 * 0.8))
+
+    def test_no_nan_in_output(self) -> None:
+        df = _risk_df()
+        result = run_risk_pipeline(df, RiskWeights())
+        assert not result[PLUVIAL_FLOOD_RISK_WELL_BEING].isna().any()
+        assert not result[PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY].isna().any()
+
+    def test_non_negative_output(self) -> None:
+        df = _risk_df()
+        result = run_risk_pipeline(df, RiskWeights())
+        assert (result[PLUVIAL_FLOOD_RISK_WELL_BEING] >= 0.0).all()
+        assert (result[PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY] >= 0.0).all()
+
+    def test_all_zeros_when_svpf_zero(self) -> None:
+        df = _risk_df(**{SOCIAL_VULNERABILITY_FLOOD_POTENTIAL: [0.0]})
+        result = run_risk_pipeline(df, RiskWeights())
+        assert result.loc[1, PLUVIAL_FLOOD_RISK_WELL_BEING] == pytest.approx(0.0)
+        assert result.loc[1, PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY] == pytest.approx(
+            0.0
+        )
