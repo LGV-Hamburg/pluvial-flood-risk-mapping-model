@@ -52,6 +52,7 @@ from ..models.field_names import (
     STATISTICAL_UNIT_ID,
 )
 from ..models.inputs import PipelineParams
+from ..spatial_utils import join_statistical_unit_attributes
 
 # ---------------------------------------------------------------------------
 # Output model
@@ -115,10 +116,13 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 title="Buildings Feature Collection",
                 description=(
                     "GeoJSON FeatureCollection of building footprints. "
-                    "Each feature must carry all socio-economic indicator "
-                    "properties as well as the population lookup fields "
-                    "(statistical_unit_id, residents_in_statistical_unit, "
-                    "living_area_m2_statistical_unit)."
+                    "Each feature must carry all socio-economic indicator properties. "
+                    "The population fields 'residents_in_statistical_unit' and "
+                    "'living_area_m2_statistical_unit' may be pre-joined onto each "
+                    "building feature, or derived automatically from a separate "
+                    "'statistical_units' input (joined by attribute via "
+                    "'statistical_unit_id', or spatially via building centroid "
+                    "when that field is absent)."
                 ),
                 schema=Schema(
                     allOf=[
@@ -158,11 +162,17 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "census attributes. Required only when 'residents_in_statistical_unit' "
                     "and 'living_area_m2_statistical_unit' are NOT pre-joined onto the "
                     "building features. Each feature must have properties: "
-                    "'statistical_unit_id' (matching the building property), "
-                    "'residents' (total registered residents), and "
+                    "'residents' (total registered residents) and "
                     "'living_area_m2' (total residential floor area [m²]). "
-                    "The join is performed by attribute (statistical_unit_id), "
-                    "not spatially."
+                    "Join strategy (chosen automatically): "
+                    "(1) Attribute join — when building features carry a "
+                    "'statistical_unit_id' property that matches the "
+                    "'statistical_unit_id' of the statistical unit features; "
+                    "(2) Spatial join — otherwise, the centroid of each building "
+                    "footprint is tested against the statistical unit polygons "
+                    "('within' predicate). Using centroids guarantees that each "
+                    "building is assigned to exactly one statistical unit, even "
+                    "when footprint edges touch a unit boundary."
                 ),
                 schema=Schema(
                     allOf=[
@@ -547,18 +557,10 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "'statistical_units' FeatureCollection input so the "
                     "values can be joined automatically."
                 )
-            stat_rows = [
-                {
-                    STATISTICAL_UNIT_ID: f["properties"]["statistical_unit_id"],
-                    RESIDENTS_IN_STATISTICAL_UNIT: f["properties"]["residents"],
-                    LIVING_AREA_M2_STATISTICAL_UNIT: f["properties"]["living_area_m2"],
-                }
-                for f in stat_units_fc["features"]
-            ]
-            stat_df = pd.DataFrame(stat_rows).drop_duplicates(
-                subset=STATISTICAL_UNIT_ID
-            )
-            gdf_metric = gdf_metric.merge(stat_df, on=STATISTICAL_UNIT_ID, how="left")
+            stat_gdf = gpd.GeoDataFrame.from_features(stat_units_fc["features"])
+            if stat_gdf.crs is None:
+                stat_gdf = stat_gdf.set_crs("EPSG:4326")
+            gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
 
         # Recover the building id used as dict key (keep it in index).
         if "id" in gdf_metric.columns:

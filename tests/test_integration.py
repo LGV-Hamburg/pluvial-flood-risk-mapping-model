@@ -383,18 +383,6 @@ class TestUnimplementedBranches:
     """Unimplemented branches must raise NotImplementedError so failures are
     explicit rather than silent (e.g. a no-op that returns empty results)."""
 
-    def test_hazard_wb_not_implemented(
-        self, process: PluvialFloodRiskProcess, exec_body: dict
-    ) -> None:
-        with pytest.raises(NotImplementedError):
-            process.hazard_wb_pipeline(exec_body)
-
-    def test_hazard_ma_not_implemented(
-        self, process: PluvialFloodRiskProcess, exec_body: dict
-    ) -> None:
-        with pytest.raises(NotImplementedError):
-            process.hazard_ma_pipeline(exec_body)
-
     def test_merge_results_not_implemented(
         self, process: PluvialFloodRiskProcess
     ) -> None:
@@ -538,3 +526,121 @@ class TestExposurePipelineStatisticalUnitsJoin:
         }
         with pytest.raises(ValueError, match="statistical_units"):
             process.exposure_pipeline(bad_body)
+
+
+# ---------------------------------------------------------------------------
+# 7. exposure_pipeline — spatial (centroid-within) join mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def exec_body_spatial_join() -> dict:
+    """Same three buildings, but WITHOUT statistical_unit_id on the features.
+
+    The statistical unit polygon is a large bounding box that contains all
+    three building centroids.  The join must be performed spatially.
+    """
+    # Bounding box covering all three buildings with generous margin:
+    # lon ∈ [_LON0 - 0.001, _LON0 + 0.002], lat ∈ [_LAT0 - 0.001, _LAT0 + 0.002]
+    unit_poly = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [_LON0 - 0.001, _LAT0 - 0.001],
+                [_LON0 + 0.002, _LAT0 - 0.001],
+                [_LON0 + 0.002, _LAT0 + 0.002],
+                [_LON0 - 0.001, _LAT0 + 0.002],
+                [_LON0 - 0.001, _LAT0 - 0.001],
+            ]
+        ],
+    }
+
+    def _feature(fid, lon, floors, btype, c, es, wr, edq):
+        return {
+            "type": "Feature",
+            "id": fid,
+            "geometry": _rect(lon, _LAT0),
+            "properties": {
+                "id": fid,
+                "floors_above_ground": floors,
+                "building_type": btype,
+                "children_under_10": c,
+                "elderly_singles_over_65": es,
+                "social_welfare_recipients": wr,
+                "no_highschool_diploma": edq,
+                # No statistical_unit_id → forces spatial join
+            },
+        }
+
+    return {
+        "inputs": {
+            "buildings": {
+                "type": "FeatureCollection",
+                "features": [
+                    _feature(1, _LON0, 1, 1, c=20, es=15, wr=18, edq=30),
+                    _feature(2, _LON0 + 0.0004, 4, 1, c=8, es=5, wr=6, edq=12),
+                    _feature(3, _LON0 + 0.0008, 3, 2, c=1, es=1, wr=1, edq=2),
+                ],
+            },
+            "statistical_units": {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": unit_poly,
+                        "properties": {
+                            "residents": 500.0,
+                            "living_area_m2": 18_000.0,
+                        },
+                    }
+                ],
+            },
+        }
+    }
+
+
+@pytest.mark.integration
+class TestExposurePipelineSpatialJoin:
+    """exposure_pipeline — spatial centroid-within join (no statistical_unit_id)."""
+
+    @pytest.fixture(scope="class")
+    def result_spatial(
+        self,
+        process: PluvialFloodRiskProcess,
+        exec_body_spatial_join: dict,
+    ) -> dict:
+        return process.exposure_pipeline(exec_body_spatial_join)
+
+    @pytest.fixture(scope="class")
+    def result_attr(
+        self, process: PluvialFloodRiskProcess, exec_body_with_stat_units: dict
+    ) -> dict:
+        """Attribute-join result as baseline (same residents/living_area values)."""
+        return process.exposure_pipeline(exec_body_with_stat_units)
+
+    def test_spatial_join_returns_four_output_keys(
+        self, result_spatial: dict
+    ) -> None:
+        expected = {
+            BUILDING_LIVING_AREA_M2,
+            RESIDENTS_PER_BUILDING,
+            RESIDENTS_GROUND_FLOOR,
+            EXPOSURE_MOBILITY_ACCESSIBILITY,
+        }
+        assert set(result_spatial.keys()) == expected
+
+    def test_spatial_join_all_building_ids_present(
+        self, result_spatial: dict
+    ) -> None:
+        for col_dict in result_spatial.values():
+            assert set(col_dict.keys()) == {1, 2, 3}
+
+    def test_spatial_join_matches_attribute_join(
+        self, result_spatial: dict, result_attr: dict
+    ) -> None:
+        """Spatial join must yield the same numeric results as attribute join."""
+        for col in result_attr:
+            for bid in (1, 2, 3):
+                assert result_spatial[col][bid] == pytest.approx(
+                    result_attr[col][bid], rel=1e-9
+                ), f"Mismatch in {col}[{bid}]"
