@@ -28,22 +28,22 @@
     - [Step 2 – Residents per Building / Ground Floor](#step-2--residents-per-building--ground-floor)
       - [Inputs](#inputs-4)
       - [Outputs](#outputs-4)
-  - [Modul 3 – Gefährdung: Mobilität & Erreichbarkeit](#modul-3--gefährdung-mobilität--erreichbarkeit)
-    - [Step 3.1 – Räumliche Verschneidung Mobilitätsgefährdung](#step-31--räumliche-verschneidung-mobilitätsgefährdung)
+  - [Modul 3 – Gefährdung: Mobilität & Erreichbarkeit ✅](#modul-3--gefährdung-mobilität--erreichbarkeit-)
+    - [Step 3.1 – Räumliche Verschneidung Mobilitätsgefährdung ✅](#step-31--räumliche-verschneidung-mobilitätsgefährdung-)
       - [Inputs (v2 — vereinfacht gegenüber v1)](#inputs-v2--vereinfacht-gegenüber-v1)
       - [Outputs](#outputs-5)
       - [Geometrische Konstruktion (v2)](#geometrische-konstruktion-v2)
-    - [Step 3.2 – Mobilitätsgefährdungsindex (Log-Normal)](#step-32--mobilitätsgefährdungsindex-log-normal)
+    - [Step 3.2 – Mobilitätsgefährdungsindex (Log-Normal) ✅](#step-32--mobilitätsgefährdungsindex-log-normal-)
       - [Inputs](#inputs-5)
       - [Outputs](#outputs-6)
-  - [Modul 4 – Gefährdung: Wohlbefinden / Gesundheit](#modul-4--gefährdung-wohlbefinden--gesundheit)
-    - [Step 4.1 – Räumliche Verschneidung Gesundheitsgefährdung](#step-41--räumliche-verschneidung-gesundheitsgefährdung)
+  - [Modul 4 – Gefährdung: Wohlbefinden / Gesundheit ✅](#modul-4--gefährdung-wohlbefinden--gesundheit-)
+    - [Step 4.1 – Räumliche Verschneidung Gesundheitsgefährdung ✅](#step-41--räumliche-verschneidung-gesundheitsgefährdung-)
       - [Inputs](#inputs-6)
       - [Outputs](#outputs-7)
-    - [Step 4.2 – Gesundheitsgefährdungsindex (Log-Normal)](#step-42--gesundheitsgefährdungsindex-log-normal)
+    - [Step 4.2 – Gesundheitsgefährdungsindex (Log-Normal) ✅](#step-42--gesundheitsgefährdungsindex-log-normal-)
       - [Inputs](#inputs-7)
       - [Outputs](#outputs-8)
-  - [Modul 5 – Risikoberechnung](#modul-5--risikoberechnung)
+  - [Modul 5 – Risikoberechnung ✅](#modul-5--risikoberechnung-)
     - [Step 5 – Risk Calculation](#step-5--risk-calculation)
       - [Inputs](#inputs-8)
       - [Outputs](#outputs-9)
@@ -80,12 +80,12 @@
     - [B7 — Custom risk exponents (`params.risk_weights`)](#b7--custom-risk-exponents-paramsrisk_weights)
     - [Coverage summary](#coverage-summary)
 - [Erläuterung: NumPy-Matrixoperationen am Beispiel TOPSIS](#erläuterung-numpy-matrixoperationen-am-beispiel-topsis)
-    - [Die Daten als Matrix](#die-daten-als-matrix)
-    - [Schritt 1 — Spaltennormierung + Gewichtung (Eq. 4)](#schritt-1--spaltennormierung--gewichtung-eq-4)
-    - [Schritt 2 — Abstände zur Worst-Case- und Best-Case-Referenz (Eq. 5)](#schritt-2--abstände-zur-worst-case--und-best-case-referenz-eq-5)
-    - [Schritt 3 — Closeness-Koeffizient](#schritt-3--closeness-koeffizient)
-    - [Schritt 4 — Shannon-Entropie-Index U_i (Eq. 6)](#schritt-4--shannon-entropie-index-u_i-eq-6)
-    - [NumPy-Muster auf einen Blick](#numpy-muster-auf-einen-blick)
+  - [Die Daten als Matrix](#die-daten-als-matrix)
+  - [Schritt 1 — Spaltennormierung + Gewichtung (Eq. 4)](#schritt-1--spaltennormierung--gewichtung-eq-4)
+  - [Schritt 2 — Abstände zur Worst-Case- und Best-Case-Referenz (Eq. 5)](#schritt-2--abstände-zur-worst-case--und-best-case-referenz-eq-5)
+  - [Schritt 3 — Closeness-Koeffizient](#schritt-3--closeness-koeffizient)
+  - [Schritt 4 — Shannon-Entropie-Index U_i (Eq. 6)](#schritt-4--shannon-entropie-index-u_i-eq-6)
+  - [NumPy-Muster auf einen Blick](#numpy-muster-auf-einen-blick)
 
 <!-- /code_chunk_output -->
 
@@ -259,12 +259,12 @@ Formel Erdgeschoss: `R_G = −(Building_type − 2) × R / Floors`
 
 ---
 
-## Modul 3 – Gefährdung: Mobilität & Erreichbarkeit
+## Modul 3 – Gefährdung: Mobilität & Erreichbarkeit ✅
 
 > **Referenzskript für die Implementierung: `v2`-Versionen** (`3_Step1_…_v2.py`, `3_Step2_…_v2.py`)
 > Step 2 ist in beiden Versionen identisch. Step 1 wurde vereinfacht (siehe unten).
 
-### Step 3.1 – Räumliche Verschneidung Mobilitätsgefährdung
+### Step 3.1 – Räumliche Verschneidung Mobilitätsgefährdung ✅
 _Skript: `3_Step1_Calculating_the_Hazard_for_Mobility_and_Accessability_v2.py`_
 
 Erzeugt konzentrische Pufferzonen um Gebäude, verschneidet diese mit Straßen- und Überflutungslayern und tabelliert den überfluteten Flächenanteil je Zone.
@@ -298,7 +298,7 @@ Erzeugt konzentrische Pufferzonen um Gebäude, verschneidet diese mit Straßen- 
 
 ---
 
-### Step 3.2 – Mobilitätsgefährdungsindex (Log-Normal)
+### Step 3.2 – Mobilitätsgefährdungsindex (Log-Normal) ✅
 _Skript: `3_Step2_Calculating_the_Hazard_for_Mobility_and_Accessability_v2.py`_
 
 Formel: `HMA = lognorm.cdf(max(Anteil_5m, Anteil_15m, Anteil_30m) × 4, σ)`
@@ -315,9 +315,9 @@ Formel: `HMA = lognorm.cdf(max(Anteil_5m, Anteil_15m, Anteil_30m) × 4, σ)`
 
 ---
 
-## Modul 4 – Gefährdung: Wohlbefinden / Gesundheit
+## Modul 4 – Gefährdung: Wohlbefinden / Gesundheit ✅
 
-### Step 4.1 – Räumliche Verschneidung Gesundheitsgefährdung
+### Step 4.1 – Räumliche Verschneidung Gesundheitsgefährdung ✅
 _Skript: `4_Step1_Calculating_Hazard_WB.py`_
 
 Erzeugt einen 2-m-Puffer um jedes Gebäude und tabelliert den überfluteten Flächenanteil für mehrere Wassertiefenszenarien.
@@ -337,7 +337,7 @@ Erzeugt einen 2-m-Puffer um jedes Gebäude und tabelliert den überfluteten Flä
 
 ---
 
-### Step 4.2 – Gesundheitsgefährdungsindex (Log-Normal)
+### Step 4.2 – Gesundheitsgefährdungsindex (Log-Normal) ✅
 _Skript: `4_Step2_Calculating_Hazard_WB.py`_
 
 Formel: `HWB = Σ lognorm.cdf(P2Flood_Xcm × 4 / 100, σ)` über alle Tiefenstufen
@@ -351,7 +351,7 @@ Formel: `HWB = Σ lognorm.cdf(P2Flood_Xcm × 4 / 100, σ)` über alle Tiefenstuf
 
 ---
 
-## Modul 5 – Risikoberechnung
+## Modul 5 – Risikoberechnung ✅
 
 ### Step 5 – Risk Calculation
 _Skript: `5_Step5_Risk_Calculation.py`_
