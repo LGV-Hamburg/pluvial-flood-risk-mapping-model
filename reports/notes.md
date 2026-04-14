@@ -327,6 +327,9 @@ Erzeugt einen 2-m-Puffer um jedes Gebäude und tabelliert den überfluteten Flä
 - Ordner mit Überflutungs-Shapefiles (ein Polygon-Layer je Tiefenstufe)
 - Dateinamens-Muster (Standard: `Flood_*`)
 
+> **Flood layer semantics — ≥X exceedance contours (not depth bands)**
+> Each flood polygon covers the area where water depth is **≥X cm**, i.e. the inundation zone for a given minimum depth. Confirmed geometrically from the Hamburg example data: polygon area decreases monotonically from 8,568 m² (≥30 cm) to 495 m² (≥100 cm), with 97 % of the 100 cm polygon nested inside the 30 cm polygon. Consequence for HWB: a building near the deep centre of the flood event intersects *more* exceedance thresholds, resulting in a higher HWB sum — which correctly reflects greater risk.
+
 #### Outputs
 - `P2{Name}` – überfluteter Anteil [%] im 2-m-Puffer je Tiefenstufe (z. B. `P2Flood_30cm`)
 - `A2{Name}` – überflutete Fläche [m²] im 2-m-Puffer je Tiefenstufe (z. B. `A2Flood_30cm`)
