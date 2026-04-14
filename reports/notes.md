@@ -70,7 +70,16 @@
     - [Performanz (Low Hanging Fruits)](#performanz-low-hanging-fruits)
     - [Formel-Angleichung ans Paper](#formel-angleichung-ans-paper)
   - [Entscheidungen & Scope](#entscheidungen--scope)
-  - [Erläuterung: NumPy-Matrixoperationen am Beispiel TOPSIS](#erläuterung-numpy-matrixoperationen-am-beispiel-topsis)
+  - [Integration Test Coverage — Branching Paths](#integration-test-coverage--branching-paths)
+    - [B1 — CRS handling (`_to_metric`)](#b1--crs-handling-_to_metric)
+    - [B2 — Statistical units join (`exposure_pipeline` + `spatial_utils.join_statistical_unit_attributes`)](#b2--statistical-units-join-exposure_pipeline--spatial_utilsjoin_statistical_unit_attributes)
+    - [B3 — Flood layer filtering (`hazard_ma_pipeline`)](#b3--flood-layer-filtering-hazard_ma_pipeline)
+    - [B4 — Building ID extraction](#b4--building-id-extraction)
+    - [B5 — Entropy weighting (`vulnerability_pipeline`)](#b5--entropy-weighting-vulnerability_pipeline)
+    - [B6 — Degenerate geometry / empty spatial results](#b6--degenerate-geometry--empty-spatial-results)
+    - [B7 — Custom risk exponents (`params.risk_weights`)](#b7--custom-risk-exponents-paramsrisk_weights)
+    - [Coverage summary](#coverage-summary)
+- [Erläuterung: NumPy-Matrixoperationen am Beispiel TOPSIS](#erläuterung-numpy-matrixoperationen-am-beispiel-topsis)
     - [Die Daten als Matrix](#die-daten-als-matrix)
     - [Schritt 1 — Spaltennormierung + Gewichtung (Eq. 4)](#schritt-1--spaltennormierung--gewichtung-eq-4)
     - [Schritt 2 — Abstände zur Worst-Case- und Best-Case-Referenz (Eq. 5)](#schritt-2--abstände-zur-worst-case--und-best-case-referenz-eq-5)
@@ -713,11 +722,114 @@ Das gibt 80 % der Testbarkeitsvorteile von Hexagonal ohne den Overhead.
 
 ---
 
-## Erläuterung: NumPy-Matrixoperationen am Beispiel TOPSIS
+## Integration Test Coverage — Branching Paths
+
+Integration tests exercise the full data path through `PluvialFloodRiskProcess` (GeoJSON → algorithm → serialised dict). The table below maps every branching decision in the process layer and `spatial_utils` to its test status.
+
+Legend: ✅ covered · ⬜ missing · ➖ not applicable
+
+---
+
+### B1 — CRS handling (`_to_metric`)
+
+Three mutually exclusive paths exist for every pipeline branch that calls `_to_metric`.
+
+| # | Condition | Effect | Status |
+|---|-----------|--------|--------|
+| B1-a | `target_crs` explicitly set (e.g. `"EPSG:25832"`) | All layers reprojected to given CRS | ⬜ |
+| B1-b | `target_crs = None` + input already projected | Input CRS kept as-is, no reprojection | ⬜ |
+| B1-c | `target_crs = None` + input is geographic (EPSG:4326) | Auto-UTM via `estimate_utm_crs()` | ✅ (implicit — all current integration tests use WGS84 input without `target_crs`) |
+
+> B1-a and B1-b are exercised only by regression tests today; no integration-level test verifies them end-to-end through the process layer.
+
+---
+
+### B2 — Statistical units join (`exposure_pipeline` + `spatial_utils.join_statistical_unit_attributes`)
+
+| # | Condition | Effect | Status |
+|---|-----------|--------|--------|
+| B2-a | `residents_in_statistical_unit` + `living_area_m2_statistical_unit` pre-joined on building features | No join performed | ✅ `TestExposurePipelineIntegration` |
+| B2-b | Fields missing + `statistical_units` absent | `ValueError` raised | ✅ `test_missing_both_inputs_raises_value_error` |
+| B2-c | Fields missing + `statistical_units` present + buildings carry `statistical_unit_id` | Attribute join via FK | ✅ `TestExposurePipelineStatisticalUnitsJoin` |
+| B2-d | Fields missing + `statistical_units` present + buildings lack `statistical_unit_id` | Spatial centroid-within join | ✅ `TestExposurePipelineSpatialJoin` |
+| B2-e | Spatial join + building centroid falls outside all unit polygons (edge case) | `residents_in_statistical_unit` = NaN → downstream division by zero | ⬜ |
+| B2-f | Attribute join + `statistical_unit_id` on building has no matching unit | Left-join produces NaN | ⬜ |
+
+---
+
+### B3 — Flood layer filtering (`hazard_ma_pipeline`)
+
+| # | Condition | Effect | Status |
+|---|-----------|--------|--------|
+| B3-a | `flood_layers` contains features at `ma_flood_level_cm` (default 30 cm) | Normal execution | ✅ (integration test `TestCrossPipelineConsistency`) |
+| B3-b | `flood_layers` contains no features at `ma_flood_level_cm` | `ValueError` with available levels listed | ⬜ |
+| B3-c | `ma_flood_level_cm` overridden via `params` to a different depth class | Correct depth used | ⬜ |
+| B3-d | `flood_layers` is empty (no features at all) | `ValueError` | ⬜ |
+
+---
+
+### B4 — Building ID extraction
+
+Buildings can carry their identifier in two places:
+
+| # | Condition | Effect | Status |
+|---|-----------|--------|--------|
+| B4-a | Feature-level `id` field present → used as index | Correct keying in output dict | ✅ (all current tests) |
+| B4-b | `id` only in `properties` (not feature-level) | Falls back to `properties.id` via `f.get("id") or f["properties"].get("id")` | ⬜ |
+| B4-c | Neither location has an `id` | `_id` = `None` → dict key collision | ⬜ |
+
+---
+
+### B5 — Entropy weighting (`vulnerability_pipeline`)
+
+| # | Condition | Effect | Status |
+|---|-----------|--------|--------|
+| B5-a | `apply_entropy = True` (default) | TOPSIS score multiplied by Shannon entropy index | ✅ (default in all tests) |
+| B5-b | `apply_entropy = False` via `params` | Pure TOPSIS closeness returned | ⬜ |
+
+---
+
+### B6 — Degenerate geometry / empty spatial results
+
+These arise inside the algorithm layer but surface as wrong output values rather than exceptions.
+
+| # | Condition | Effect | Status |
+|---|-----------|--------|--------|
+| B6-a | Flood layer covers no buildings (zero intersection) | All fraction columns = 0, HWB = HMA = 0 | ✅ (unit tests; no integration-level test) |
+| B6-b | Street layer produces empty buffer intersection for all buildings | All MA fraction columns = 0, HMA = 0 | ✅ (unit tests; no integration-level test) |
+| B6-c | All buildings have zero exposure (EWB = EMA = 0) | PFR_WB = PFR_MA = 0 | ⬜ |
+
+---
+
+### B7 — Custom risk exponents (`params.risk_weights`)
+
+| # | Condition | Effect | Status |
+|---|-----------|--------|--------|
+| B7-a | All exponents = 1.0 (default) | Simple product | ✅ (implicit in all tests) |
+| B7-b | Non-default exponents supplied via `params` | Power transform applied | ⬜ |
+
+---
+
+### Coverage summary
+
+| Area | Covered | Missing |
+|------|---------|---------|
+| B1 — CRS handling | 1 / 3 | B1-a, B1-b |
+| B2 — Statistical units join | 4 / 6 | B2-e, B2-f |
+| B3 — Flood layer filtering | 1 / 4 | B3-b, B3-c, B3-d |
+| B4 — Building ID extraction | 1 / 3 | B4-b, B4-c |
+| B5 — Entropy weighting | 1 / 2 | B5-b |
+| B6 — Empty spatial results | 2 / 3 | B6-c |
+| B7 — Custom risk exponents | 1 / 2 | B7-b |
+| **Total** | **11 / 23** | **12 / 23** |
+
+The highest-priority gaps (silent wrong results rather than explicit errors) are: **B2-e** (NaN propagation into exposure), **B3-b/d** (wrong depth class / empty flood layer), and **B4-c** (None key in output dict).
+
+# Erläuterung: NumPy-Matrixoperationen am Beispiel TOPSIS
 
 Für Einsteiger: Was passiert bei den NumPy-Operationen in `topsis.py` konkret?
 
-### Die Daten als Matrix
+## Die Daten als Matrix
 
 Jede Zeile = ein Gebäude, jede Spalte = ein Indikator. `M[i, j]` = Wert von Gebäude `i` für Indikator `j`.
 
@@ -728,7 +840,7 @@ Gebäude B    2.0        1.0      ← Zeile 1
 Gebäude C    3.0        4.0      ← Zeile 2
 ```
 
-### Schritt 1 — Spaltennormierung + Gewichtung (Eq. 4)
+## Schritt 1 — Spaltennormierung + Gewichtung (Eq. 4)
 
 Warum: Indikatoren haben unterschiedliche Skalen → faire Vergleichbarkeit durch L2-Normierung (jede Spalte bekommt Länge 1), dann Multiplikation mit dem zugehörigen Gewicht.
 
@@ -738,7 +850,7 @@ col_sq_sum       # Summe der quadrierten Spaltenwerte
 M[:, j] / sqrt(col_sq_sum) * weight[j]   # normiert + gewichtet
 ```
 
-### Schritt 2 — Abstände zur Worst-Case- und Best-Case-Referenz (Eq. 5)
+## Schritt 2 — Abstände zur Worst-Case- und Best-Case-Referenz (Eq. 5)
 
 ```python
 ideal_max = M.max(axis=0)   # axis=0: Spaltenmaxima → Worst-Case je Attribut
@@ -755,7 +867,7 @@ d_from_max = np.sqrt(np.sum((M - ideal_max)**2, axis=1))
 - `axis=0` → über Zeilen hinweg kollabieren → ein Ergebnis je Spalte (z. B. Spaltenmaxima)
 - `axis=1` → über Spalten hinweg kollabieren → ein Ergebnis je Zeile/Gebäude (z. B. Abstandssumme)
 
-### Schritt 3 — Closeness-Koeffizient
+## Schritt 3 — Closeness-Koeffizient
 
 ```python
 C = d_from_min / (d_from_max + d_from_min)
@@ -764,7 +876,7 @@ C = d_from_min / (d_from_max + d_from_min)
 np.where(denom > 0, ..., 0.0)   # elementweiser if/else ohne Python-Loop
 ```
 
-### Schritt 4 — Shannon-Entropie-Index U_i (Eq. 6)
+## Schritt 4 — Shannon-Entropie-Index U_i (Eq. 6)
 
 ```python
 M[i]          # Zeile i: alle Indikatorwerte eines einzelnen Gebäudes
@@ -776,7 +888,7 @@ U[i] = 2.0 + (1/ln_n) * sum(p * log(p))   # Shannon-Entropie-Formel
 - Ein Attribut dominiert, Rest ≈ 0 → maximale Heterogenität → U = 2
 - Enthält eine Zeile eine Null → `log(0)` undefiniert → U = 2 als konservative Annahme
 
-### NumPy-Muster auf einen Blick
+## NumPy-Muster auf einen Blick
 
 | Ausdruck | Bedeutung |
 |---|---|
@@ -787,3 +899,4 @@ U[i] = 2.0 + (1/ln_n) * sum(p * log(p))   # Shannon-Entropie-Formel
 | `np.sum(..., axis=1)` | Über Spalten summieren → ein Wert je Zeile/Gebäude |
 | `a ** 2` | Jedes Element quadrieren (kein Loop) |
 | `np.where(cond, a, b)` | Elementweiser bedingter Ausdruck |
+---
