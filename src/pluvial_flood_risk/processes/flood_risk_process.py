@@ -757,13 +757,15 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         for step_name in required_steps:
             step_result = results[step_name]
             step_columns = {
-                column: pd.Series(values)
+                column: pd.Series(values, index=values.keys())
                 for column, values in step_result.items()
                 if column != _RESULT_META_KEY
             }
             partial_frames.append(pd.DataFrame(step_columns))
 
         merged_df = pd.concat(partial_frames, axis=1)
+        # Ensure index is string dtype for consistent lookups
+        merged_df.index = merged_df.index.astype(str)
         risk_df = run_risk_pipeline(merged_df, params.risk_weights)
         classified = run_classification_pipeline(
             risk_df,
@@ -790,12 +792,14 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         enriched_features: list[dict] = []
         for feature in source_features:
             building_id = self._feature_id(feature)
-            if building_id not in classified.data.index:
+            # Convert to string to match concatenated DataFrame index dtype
+            building_id_key = str(building_id)
+            if building_id_key not in classified.data.index:
                 raise ValueError(
                     f"Missing merged results for building id {building_id!r}."
                 )
             properties = dict(feature.get("properties", {}))
-            row = classified.data.loc[building_id]
+            row = classified.data.loc[building_id_key]
             for column in output_columns:
                 properties[column] = self._json_scalar(row[column])
             enriched_features.append(
