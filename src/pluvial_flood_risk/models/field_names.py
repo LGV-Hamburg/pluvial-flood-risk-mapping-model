@@ -135,5 +135,17 @@ HAZARD_MOBILITY_ACCESSIBILITY: str = "hazard_mobility_accessibility"
 PLUVIAL_FLOOD_RISK_WELL_BEING: str = "pluvial_flood_risk_well_being"
 """Pluvial flood risk index for well-being PFR_WB (Step 5, Eq. 14)."""
 
-PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY: str = "pluvial_flood_risk_mobility_accessibility"
+PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY: str = (
+    "pluvial_flood_risk_mobility_accessibility"
+)
 """Pluvial flood risk index for mobility & accessibility PFR_MA (Step 5, Eq. 15)."""
+
+# ---------------------------------------------------------------------------
+# Classification output (Step 6)
+# ---------------------------------------------------------------------------
+
+RISK_CLASS_WELL_BEING: str = "risk_class_well_being"
+"""Ordinal risk class for well-being (0 = no risk … n = very high risk) from Head/Tail Breaks (Step 6)."""
+
+RISK_CLASS_MOBILITY_ACCESSIBILITY: str = "risk_class_mobility_accessibility"
+"""Ordinal risk class for mobility & accessibility (Step 6)."""
