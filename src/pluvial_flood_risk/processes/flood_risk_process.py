@@ -487,15 +487,18 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         return gdf.to_crs(utm)
 
     @staticmethod
-    def _feature_id(feature: dict) -> int | str:
-        """Extract the building identifier from a GeoJSON feature."""
+    def _feature_id(feature: dict) -> str:
+        """Extract the building identifier from a GeoJSON feature as string."""
         feature_id = feature.get("id") or feature.get("properties", {}).get("id")
         if feature_id is None:
             raise ValueError(
                 "Each building feature must provide an id either at the feature "
                 "top level or in properties.id."
             )
-        return feature_id
+
+        # feature id to string (
+        # ensure consistent dict keys for parallel branches, and JSON serialisability)
+        return str(feature_id)
 
     @staticmethod
     def _json_scalar(value):
@@ -757,7 +760,10 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         for step_name in required_steps:
             step_result = results[step_name]
             step_columns = {
-                column: pd.Series(values, index=values.keys())
+                column: pd.Series(
+                    data=values.values(),
+                    index=[str(building_id) for building_id in values.keys()],
+                )
                 for column, values in step_result.items()
                 if column != _RESULT_META_KEY
             }
@@ -792,14 +798,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         enriched_features: list[dict] = []
         for feature in source_features:
             building_id = self._feature_id(feature)
-            # Convert to string to match concatenated DataFrame index dtype
-            building_id_key = str(building_id)
-            if building_id_key not in classified.data.index:
+            if building_id not in classified.data.index:
                 raise ValueError(
                     f"Missing merged results for building id {building_id!r}."
                 )
             properties = dict(feature.get("properties", {}))
-            row = classified.data.loc[building_id_key]
+            row = classified.data.loc[building_id]
             for column in output_columns:
                 properties[column] = self._json_scalar(row[column])
             enriched_features.append(
