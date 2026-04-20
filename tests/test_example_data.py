@@ -57,6 +57,10 @@ import pandas as pd
 import pytest
 from scipy.stats import lognorm
 
+from pluvial_flood_risk.algorithms.classification import (
+    ClassificationResult,
+    run_classification_pipeline,
+)
 from pluvial_flood_risk.algorithms.exposure import run_exposure_pipeline
 from pluvial_flood_risk.algorithms.hazard_ma import (
     compute_hazard_ma,
@@ -88,6 +92,8 @@ from pluvial_flood_risk.models.field_names import (
     PLUVIAL_FLOOD_RISK_WELL_BEING,
     RESIDENTS_GROUND_FLOOR,
     RESIDENTS_PER_BUILDING,
+    RISK_CLASS_MOBILITY_ACCESSIBILITY,
+    RISK_CLASS_WELL_BEING,
     SENSITIVITY_INDEX,
     SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
     SOCIAL_VULNERABILITY_INDEX,
@@ -1055,4 +1061,108 @@ class TestRiskPipelineStructural:
         corr = ours.corr(exp, method="spearman")
         assert corr >= 0.5, (
             f"Spearman rank correlation for PFR_WB is too low ({corr:.3f})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 6. Classification pipeline (Step 6, Head/Tail Breaks)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def classification_result(risk_result: pd.DataFrame) -> ClassificationResult:
+    """Head/Tail Breaks classification applied to the example risk values."""
+    params = PipelineParams()
+    return run_classification_pipeline(risk_result, params.n_classification_iterations)
+
+
+@pytest.mark.regression
+class TestClassificationPipelineRegression:
+    """Regression tests for run_classification_pipeline on real example data."""
+
+    def test_returns_classification_result(
+        self, classification_result: ClassificationResult
+    ) -> None:
+        assert isinstance(classification_result, ClassificationResult)
+
+    def test_risk_class_columns_present(
+        self, classification_result: ClassificationResult
+    ) -> None:
+        assert RISK_CLASS_WELL_BEING in classification_result.data.columns
+        assert RISK_CLASS_MOBILITY_ACCESSIBILITY in classification_result.data.columns
+
+    def test_all_buildings_classified(
+        self,
+        classification_result: ClassificationResult,
+        buildings_gdf: gpd.GeoDataFrame,
+    ) -> None:
+        assert set(classification_result.data.index) == set(buildings_gdf.index)
+        assert not classification_result.data[RISK_CLASS_WELL_BEING].isna().any()
+        assert (
+            not classification_result.data[RISK_CLASS_MOBILITY_ACCESSIBILITY]
+            .isna()
+            .any()
+        )
+
+    def test_break_count_matches_n_iterations(
+        self, classification_result: ClassificationResult
+    ) -> None:
+        """With the default 4 iterations and sufficiently varied PFR values,
+        all 4 breaks should be produced."""
+        params = PipelineParams()
+        assert (
+            len(classification_result.breaks_well_being)
+            == params.n_classification_iterations
+        )
+        assert (
+            len(classification_result.breaks_mobility_accessibility)
+            == params.n_classification_iterations
+        )
+
+    def test_classes_range_0_to_n_iterations(
+        self, classification_result: ClassificationResult
+    ) -> None:
+        params = PipelineParams()
+        assert classification_result.data[RISK_CLASS_WELL_BEING].min() == 0
+        assert (
+            classification_result.data[RISK_CLASS_WELL_BEING].max()
+            <= params.n_classification_iterations
+        )
+        assert classification_result.data[RISK_CLASS_MOBILITY_ACCESSIBILITY].min() == 0
+        assert (
+            classification_result.data[RISK_CLASS_MOBILITY_ACCESSIBILITY].max()
+            <= params.n_classification_iterations
+        )
+
+    def test_breaks_are_strictly_increasing(
+        self, classification_result: ClassificationResult
+    ) -> None:
+        breaks_wb = classification_result.breaks_well_being
+        for i in range(len(breaks_wb) - 1):
+            assert breaks_wb[i] < breaks_wb[i + 1], (
+                f"WB breaks not strictly increasing at index {i}: {breaks_wb}"
+            )
+        breaks_ma = classification_result.breaks_mobility_accessibility
+        for i in range(len(breaks_ma) - 1):
+            assert breaks_ma[i] < breaks_ma[i + 1], (
+                f"MA breaks not strictly increasing at index {i}: {breaks_ma}"
+            )
+
+    def test_class_order_consistent_with_risk_rank(
+        self,
+        classification_result: ClassificationResult,
+        risk_result: pd.DataFrame,
+    ) -> None:
+        """Spearman correlation between PFR_WB and risk_class_well_being ≥ 0.9.
+
+        Head/Tail Breaks must preserve the ordinal ranking of risk values.
+        """
+        common = sorted(set(classification_result.data.index) & set(risk_result.index))
+        pfr = risk_result.loc[common, PLUVIAL_FLOOD_RISK_WELL_BEING]
+        cls = classification_result.data.loc[common, RISK_CLASS_WELL_BEING].astype(
+            float
+        )
+        corr = pfr.corr(cls, method="spearman")
+        assert corr >= 0.75, (
+            f"Spearman rank correlation between PFR_WB and class is too low ({corr:.3f})"
         )
