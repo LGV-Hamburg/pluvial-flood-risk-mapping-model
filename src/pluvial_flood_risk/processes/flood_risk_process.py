@@ -31,9 +31,11 @@ from fastprocesses.core.models import (
 from fastprocesses.processes.process_registry import register_process
 from pydantic import BaseModel
 
+from ..algorithms.classification import run_classification_pipeline
 from ..algorithms.exposure import run_exposure_pipeline
 from ..algorithms.hazard_ma import run_hazard_ma_pipeline
 from ..algorithms.hazard_wb import run_hazard_wb_pipeline
+from ..algorithms.risk import run_risk_pipeline
 from ..algorithms.vulnerability import run_vulnerability_pipeline
 from ..models.field_names import (
     BUILDING_FOOTPRINT_AREA_M2,
@@ -43,16 +45,21 @@ from ..models.field_names import (
     HAZARD_MOBILITY_ACCESSIBILITY,
     HAZARD_WELL_BEING,
     LIVING_AREA_M2_STATISTICAL_UNIT,
+    PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
+    PLUVIAL_FLOOD_RISK_WELL_BEING,
     RESIDENTS_GROUND_FLOOR,
     RESIDENTS_IN_STATISTICAL_UNIT,
     RESIDENTS_PER_BUILDING,
+    RISK_CLASS_MOBILITY_ACCESSIBILITY,
+    RISK_CLASS_WELL_BEING,
     SENSITIVITY_INDEX,
     SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
     SOCIAL_VULNERABILITY_INDEX,
-    STATISTICAL_UNIT_ID,
 )
 from ..models.inputs import PipelineParams
 from ..spatial_utils import join_statistical_unit_attributes
+
+_RESULT_META_KEY = "__meta__"
 
 # ---------------------------------------------------------------------------
 # Output model
@@ -479,6 +486,26 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         utm = reference.estimate_utm_crs()
         return gdf.to_crs(utm)
 
+    @staticmethod
+    def _feature_id(feature: dict) -> int | str:
+        """Extract the building identifier from a GeoJSON feature."""
+        feature_id = feature.get("id") or feature.get("properties", {}).get("id")
+        if feature_id is None:
+            raise ValueError(
+                "Each building feature must provide an id either at the feature "
+                "top level or in properties.id."
+            )
+        return feature_id
+
+    @staticmethod
+    def _json_scalar(value):
+        """Convert pandas / numpy scalars to JSON-safe Python values."""
+        if pd.isna(value):
+            return None
+        if hasattr(value, "item"):
+            return value.item()
+        return value
+
     # ------------------------------------------------------------------
     # Parallel branches
     #
@@ -515,10 +542,15 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             SOCIAL_VULNERABILITY_INDEX,
             SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
         ]
-        return {
+        result = {
             col: result_df[col].where(result_df[col].notna(), other=None).to_dict()
             for col in output_columns
         }
+        result[_RESULT_META_KEY] = {
+            "buildings": buildings_fc["features"],
+            "params": inputs.get("params", {}),
+        }
+        return result
 
     @parallel_step
     def exposure_pipeline(self, exec_body: dict) -> dict:
@@ -701,4 +733,84 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         Returns:
             RiskResult with GeoJSON FeatureCollection and classification breaks.
         """
-        raise NotImplementedError
+        required_steps = {
+            "vulnerability_pipeline",
+            "exposure_pipeline",
+            "hazard_wb_pipeline",
+            "hazard_ma_pipeline",
+        }
+        missing_steps = sorted(required_steps - set(results))
+        if missing_steps:
+            raise ValueError(
+                f"merge_results is missing required step outputs: {missing_steps}"
+            )
+
+        vulnerability_result = results["vulnerability_pipeline"]
+        meta = vulnerability_result.get(_RESULT_META_KEY)
+        if meta is None:
+            raise ValueError("vulnerability_pipeline result is missing merge metadata.")
+
+        source_features = meta.get("buildings", [])
+        params = PipelineParams.model_validate(meta.get("params", {}))
+
+        partial_frames: list[pd.DataFrame] = []
+        for step_name in required_steps:
+            step_result = results[step_name]
+            step_columns = {
+                column: pd.Series(values)
+                for column, values in step_result.items()
+                if column != _RESULT_META_KEY
+            }
+            partial_frames.append(pd.DataFrame(step_columns))
+
+        merged_df = pd.concat(partial_frames, axis=1)
+        risk_df = run_risk_pipeline(merged_df, params.risk_weights)
+        classified = run_classification_pipeline(
+            risk_df,
+            params.n_classification_iterations,
+        )
+
+        output_columns = [
+            SENSITIVITY_INDEX,
+            COPING_CAPACITY_INDEX,
+            SOCIAL_VULNERABILITY_INDEX,
+            SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
+            BUILDING_LIVING_AREA_M2,
+            RESIDENTS_PER_BUILDING,
+            RESIDENTS_GROUND_FLOOR,
+            EXPOSURE_MOBILITY_ACCESSIBILITY,
+            HAZARD_WELL_BEING,
+            HAZARD_MOBILITY_ACCESSIBILITY,
+            PLUVIAL_FLOOD_RISK_WELL_BEING,
+            PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
+            RISK_CLASS_WELL_BEING,
+            RISK_CLASS_MOBILITY_ACCESSIBILITY,
+        ]
+
+        enriched_features: list[dict] = []
+        for feature in source_features:
+            building_id = self._feature_id(feature)
+            if building_id not in classified.data.index:
+                raise ValueError(
+                    f"Missing merged results for building id {building_id!r}."
+                )
+            properties = dict(feature.get("properties", {}))
+            row = classified.data.loc[building_id]
+            for column in output_columns:
+                properties[column] = self._json_scalar(row[column])
+            enriched_features.append(
+                {
+                    **feature,
+                    "properties": properties,
+                }
+            )
+
+        risk_features = {
+            "type": "FeatureCollection",
+            "features": enriched_features,
+        }
+        return RiskResult(
+            risk_features=risk_features,
+            classification_breaks_wb=classified.breaks_well_being,
+            classification_breaks_ma=classified.breaks_mobility_accessibility,
+        )
