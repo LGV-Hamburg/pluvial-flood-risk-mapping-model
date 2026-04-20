@@ -50,6 +50,7 @@ The hazard and merge branches are not yet implemented and are excluded.
 
 from __future__ import annotations
 
+import copy
 import math
 
 import pytest
@@ -58,8 +59,14 @@ from pluvial_flood_risk.models.field_names import (
     BUILDING_LIVING_AREA_M2,
     COPING_CAPACITY_INDEX,
     EXPOSURE_MOBILITY_ACCESSIBILITY,
+    HAZARD_MOBILITY_ACCESSIBILITY,
+    HAZARD_WELL_BEING,
+    PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
+    PLUVIAL_FLOOD_RISK_WELL_BEING,
     RESIDENTS_GROUND_FLOOR,
     RESIDENTS_PER_BUILDING,
+    RISK_CLASS_MOBILITY_ACCESSIBILITY,
+    RISK_CLASS_WELL_BEING,
     SENSITIVITY_INDEX,
     SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
     SOCIAL_VULNERABILITY_INDEX,
@@ -69,6 +76,8 @@ from pluvial_flood_risk.models.field_names import (
 # Import triggers @register_process side-effect — intentional.
 # ---------------------------------------------------------------------------
 from pluvial_flood_risk.processes.flood_risk_process import PluvialFloodRiskProcess
+
+_RESULT_META_KEY = "__meta__"
 
 # ---------------------------------------------------------------------------
 # Helpers — compact GeoJSON polygon generator (Hamburg area)
@@ -91,6 +100,22 @@ def _rect(lon: float, lat: float) -> dict:
                 [lon + _DL, lat + _DB],
                 [lon, lat + _DB],
                 [lon, lat],
+            ]
+        ],
+    }
+
+
+def _bbox(min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> dict:
+    """Return a closed GeoJSON Polygon for an axis-aligned bounding box."""
+    return {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [min_lon, min_lat],
+                [max_lon, min_lat],
+                [max_lon, max_lat],
+                [min_lon, max_lat],
+                [min_lon, min_lat],
             ]
         ],
     }
@@ -154,6 +179,55 @@ def exec_body() -> dict:
     }
 
 
+@pytest.fixture(scope="module")
+def exec_body_full(exec_body: dict) -> dict:
+    """exec_body extended with streets and flood layers for merge_results tests."""
+    body = copy.deepcopy(exec_body)
+    body["inputs"]["streets"] = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [
+                        [_LON0 - 0.0002, _LAT0 + 0.00008],
+                        [_LON0 + 0.0012, _LAT0 + 0.00008],
+                    ],
+                },
+                "properties": {},
+            }
+        ],
+    }
+    body["inputs"]["flood_layers"] = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": _bbox(
+                    _LON0 - 0.00005, _LAT0 - 0.00005, _LON0 + 0.00032, _LAT0 + 0.00030
+                ),
+                "properties": {"level_cm": 30},
+            },
+            {
+                "type": "Feature",
+                "geometry": _bbox(
+                    _LON0 + 0.00018, _LAT0 - 0.00005, _LON0 + 0.00072, _LAT0 + 0.00030
+                ),
+                "properties": {"level_cm": 30},
+            },
+            {
+                "type": "Feature",
+                "geometry": _bbox(
+                    _LON0 - 0.00002, _LAT0 + 0.00002, _LON0 + 0.00018, _LAT0 + 0.00022
+                ),
+                "properties": {"level_cm": 60},
+            },
+        ],
+    }
+    return body
+
+
 # ---------------------------------------------------------------------------
 # Shared process fixture — one instance per test session
 # ---------------------------------------------------------------------------
@@ -210,10 +284,17 @@ class TestVulnerabilityPipelineIntegration:
             SOCIAL_VULNERABILITY_INDEX,
             SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
         }
-        assert set(result.keys()) == expected
+        assert expected.issubset(result.keys())
+        assert _RESULT_META_KEY in result
 
     def test_all_building_ids_present(self, result: dict) -> None:
-        for col_dict in result.values():
+        for col in (
+            SENSITIVITY_INDEX,
+            COPING_CAPACITY_INDEX,
+            SOCIAL_VULNERABILITY_INDEX,
+            SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
+        ):
+            col_dict = result[col]
             assert set(col_dict.keys()) == {1, 2, 3}
 
     def test_sensitivity_values_non_negative(self, result: dict) -> None:
@@ -245,7 +326,13 @@ class TestVulnerabilityPipelineIntegration:
         assert svi[2] >= svi[3], "B2 SVI should be ≥ B3 SVI"
 
     def test_no_nan_in_output(self, result: dict) -> None:
-        for col, col_dict in result.items():
+        for col in (
+            SENSITIVITY_INDEX,
+            COPING_CAPACITY_INDEX,
+            SOCIAL_VULNERABILITY_INDEX,
+            SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
+        ):
+            col_dict = result[col]
             for bid, val in col_dict.items():
                 assert val is None or not math.isnan(val), (
                     f"Unexpected NaN for {col}[{bid}]"
@@ -368,26 +455,92 @@ class TestCrossPipelineConsistency:
     def test_no_missing_values_across_branches(
         self, vuln_result: dict, expo_result: dict
     ) -> None:
-        for col_dict in (*vuln_result.values(), *expo_result.values()):
+        vuln_columns = (
+            SENSITIVITY_INDEX,
+            COPING_CAPACITY_INDEX,
+            SOCIAL_VULNERABILITY_INDEX,
+            SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
+        )
+        expo_columns = (
+            BUILDING_LIVING_AREA_M2,
+            RESIDENTS_PER_BUILDING,
+            RESIDENTS_GROUND_FLOOR,
+            EXPOSURE_MOBILITY_ACCESSIBILITY,
+        )
+        for col_dict in [
+            *(vuln_result[col] for col in vuln_columns),
+            *(expo_result[col] for col in expo_columns),
+        ]:
             for bid, val in col_dict.items():
                 assert val is not None, f"None value for building {bid}"
 
 
 # ---------------------------------------------------------------------------
-# 5. Not-yet-implemented branches raise NotImplementedError
+# 5. merge_results integration
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
-class TestUnimplementedBranches:
-    """Unimplemented branches must raise NotImplementedError so failures are
-    explicit rather than silent (e.g. a no-op that returns empty results)."""
+class TestMergeResultsIntegration:
+    """merge_results wires Step 5 and Step 6 on top of Steps 1–4."""
 
-    def test_merge_results_not_implemented(
-        self, process: PluvialFloodRiskProcess
-    ) -> None:
-        with pytest.raises(NotImplementedError):
-            process.merge_results({})
+    @pytest.fixture(scope="class")
+    def merged_result(
+        self,
+        process: PluvialFloodRiskProcess,
+        exec_body_full: dict,
+    ):
+        results = {
+            "vulnerability_pipeline": process.vulnerability_pipeline(exec_body_full),
+            "exposure_pipeline": process.exposure_pipeline(exec_body_full),
+            "hazard_wb_pipeline": process.hazard_wb_pipeline(exec_body_full),
+            "hazard_ma_pipeline": process.hazard_ma_pipeline(exec_body_full),
+        }
+        return process.merge_results(results)
+
+    def test_returns_feature_collection(self, merged_result) -> None:
+        assert merged_result.risk_features["type"] == "FeatureCollection"
+        assert len(merged_result.risk_features["features"]) == 3
+
+    def test_includes_step_5_risk_outputs(self, merged_result) -> None:
+        for feature in merged_result.risk_features["features"]:
+            props = feature["properties"]
+            assert PLUVIAL_FLOOD_RISK_WELL_BEING in props
+            assert PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY in props
+
+    def test_includes_step_6_class_outputs(self, merged_result) -> None:
+        for feature in merged_result.risk_features["features"]:
+            props = feature["properties"]
+            assert RISK_CLASS_WELL_BEING in props
+            assert RISK_CLASS_MOBILITY_ACCESSIBILITY in props
+
+    def test_step_5_wb_depends_on_steps_1_2_4(self, merged_result) -> None:
+        for feature in merged_result.risk_features["features"]:
+            props = feature["properties"]
+            expected = (
+                props[SOCIAL_VULNERABILITY_FLOOD_POTENTIAL]
+                * props[RESIDENTS_GROUND_FLOOR]
+                * props[HAZARD_WELL_BEING]
+            )
+            assert props[PLUVIAL_FLOOD_RISK_WELL_BEING] == pytest.approx(expected)
+
+    def test_step_5_ma_depends_on_steps_1_2_3(self, merged_result) -> None:
+        for feature in merged_result.risk_features["features"]:
+            props = feature["properties"]
+            expected = (
+                props[SOCIAL_VULNERABILITY_FLOOD_POTENTIAL]
+                * props[EXPOSURE_MOBILITY_ACCESSIBILITY]
+                * props[HAZARD_MOBILITY_ACCESSIBILITY]
+            )
+            assert props[PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY] == pytest.approx(
+                expected
+            )
+
+    def test_returns_classification_breaks(self, merged_result) -> None:
+        assert isinstance(merged_result.classification_breaks_wb, list)
+        assert isinstance(merged_result.classification_breaks_ma, list)
+        assert len(merged_result.classification_breaks_wb) >= 1
+        assert len(merged_result.classification_breaks_ma) >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -618,9 +771,7 @@ class TestExposurePipelineSpatialJoin:
         """Attribute-join result as baseline (same residents/living_area values)."""
         return process.exposure_pipeline(exec_body_with_stat_units)
 
-    def test_spatial_join_returns_four_output_keys(
-        self, result_spatial: dict
-    ) -> None:
+    def test_spatial_join_returns_four_output_keys(self, result_spatial: dict) -> None:
         expected = {
             BUILDING_LIVING_AREA_M2,
             RESIDENTS_PER_BUILDING,
@@ -629,9 +780,7 @@ class TestExposurePipelineSpatialJoin:
         }
         assert set(result_spatial.keys()) == expected
 
-    def test_spatial_join_all_building_ids_present(
-        self, result_spatial: dict
-    ) -> None:
+    def test_spatial_join_all_building_ids_present(self, result_spatial: dict) -> None:
         for col_dict in result_spatial.values():
             assert set(col_dict.keys()) == {1, 2, 3}
 
