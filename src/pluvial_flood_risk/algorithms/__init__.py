@@ -1,5 +1,11 @@
 """Algorithm modules for the pluvial flood risk pipeline."""
 
+from .classification import (
+    ClassificationResult,
+    classify_risk,
+    head_tail_breaks,
+    run_classification_pipeline,
+)
 from .exposure import (
     compute_building_living_area,
     compute_exposure_mobility_accessibility,
@@ -30,6 +36,10 @@ from .vulnerability import (
 )
 
 __all__ = [
+    "ClassificationResult",
+    "head_tail_breaks",
+    "classify_risk",
+    "run_classification_pipeline",
     "topsis",
     "compute_sensitivity",
     "compute_coping_capacity",
