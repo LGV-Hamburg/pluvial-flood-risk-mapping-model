@@ -1319,7 +1319,7 @@ class TestRunRiskPipeline:
                 RESIDENTS_GROUND_FLOOR: [3.0],
                 HAZARD_WELL_BEING: [2.5],
                 EXPOSURE_MOBILITY_ACCESSIBILITY: [999.0],  # must not affect WB
-                HAZARD_MOBILITY_ACCESSIBILITY: [999.0],    # must not affect WB
+                HAZARD_MOBILITY_ACCESSIBILITY: [999.0],  # must not affect WB
             }
         )
         result = run_risk_pipeline(df, RiskWeights())
@@ -1327,9 +1327,9 @@ class TestRunRiskPipeline:
             0.4 * 3.0 * 2.5
         )
         # MA path must not be polluted by WB inputs
-        assert result.loc[1, PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY] == pytest.approx(
-            0.4 * 999.0 * 999.0
-        )
+        assert result.loc[
+            1, PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY
+        ] == pytest.approx(0.4 * 999.0 * 999.0)
 
     def test_ma_uses_ema_and_hma(self) -> None:
         """PFR_MA = SV_PF * EMA * HMA."""
@@ -1338,14 +1338,14 @@ class TestRunRiskPipeline:
                 SOCIAL_VULNERABILITY_FLOOD_POTENTIAL: [0.6],
                 EXPOSURE_MOBILITY_ACCESSIBILITY: [10.0],
                 HAZARD_MOBILITY_ACCESSIBILITY: [0.5],
-                RESIDENTS_GROUND_FLOOR: [999.0],           # must not affect MA
-                HAZARD_WELL_BEING: [999.0],                # must not affect MA
+                RESIDENTS_GROUND_FLOOR: [999.0],  # must not affect MA
+                HAZARD_WELL_BEING: [999.0],  # must not affect MA
             }
         )
         result = run_risk_pipeline(df, RiskWeights())
-        assert result.loc[1, PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY] == pytest.approx(
-            0.6 * 10.0 * 0.5
-        )
+        assert result.loc[
+            1, PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY
+        ] == pytest.approx(0.6 * 10.0 * 0.5)
 
     def test_wb_uses_same_svpf_as_ma(self) -> None:
         """SV_PF is shared — the vulnerability factor is the same for both indices."""
@@ -1380,6 +1380,212 @@ class TestRunRiskPipeline:
         df = _risk_df(**{SOCIAL_VULNERABILITY_FLOOD_POTENTIAL: [0.0]})
         result = run_risk_pipeline(df, RiskWeights())
         assert result.loc[1, PLUVIAL_FLOOD_RISK_WELL_BEING] == pytest.approx(0.0)
-        assert result.loc[1, PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY] == pytest.approx(
-            0.0
+        assert result.loc[
+            1, PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY
+        ] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Module 6: Classification (Step 6, Head/Tail Breaks)
+# ---------------------------------------------------------------------------
+
+from pluvial_flood_risk.algorithms.classification import (  # noqa: E402
+    ClassificationResult,
+    classify_risk,
+    head_tail_breaks,
+    run_classification_pipeline,
+)
+from pluvial_flood_risk.models.field_names import (  # noqa: E402
+    RISK_CLASS_MOBILITY_ACCESSIBILITY,
+    RISK_CLASS_WELL_BEING,
+)
+
+
+def _classification_df(**kwargs) -> pd.DataFrame:
+    """Build a minimal risk DataFrame for classification tests."""
+    defaults = {
+        PLUVIAL_FLOOD_RISK_WELL_BEING: [1.0, 2.0, 4.0, 8.0],
+        PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY: [0.5, 1.5, 3.0, 6.0],
+    }
+    defaults.update(kwargs)
+    idx = list(range(1, len(next(iter(defaults.values()))) + 1))
+    return pd.DataFrame(defaults, index=idx)
+
+
+class TestHeadTailBreaks:
+    """Unit tests for head_tail_breaks()."""
+
+    def test_known_values_two_iterations(self) -> None:
+        # values: [1, 2, 4, 8] → mean=3.75 → break₀=3.75; tail=[4,8] → mean=6 → break₁=6
+        values = pd.Series([1.0, 2.0, 4.0, 8.0])
+        breaks = head_tail_breaks(values, n_iterations=2)
+        assert len(breaks) == 2
+        assert breaks[0] == pytest.approx(3.75)
+        assert breaks[1] == pytest.approx(6.0)
+
+    def test_length_capped_at_n_iterations(self) -> None:
+        values = pd.Series([1.0, 2.0, 4.0, 8.0, 16.0, 32.0])
+        breaks = head_tail_breaks(values, n_iterations=3)
+        assert len(breaks) == 3
+
+    def test_early_exit_when_all_equal(self) -> None:
+        # All values equal → mean = value → no value strictly above mean → stops after 1 break
+        values = pd.Series([3.0, 3.0, 3.0])
+        breaks = head_tail_breaks(values, n_iterations=4)
+        assert breaks == [pytest.approx(3.0)]
+
+    def test_empty_series_returns_empty(self) -> None:
+        breaks = head_tail_breaks(pd.Series([], dtype=float), n_iterations=4)
+        assert breaks == []
+
+    def test_single_value_returns_one_break_then_stops(self) -> None:
+        breaks = head_tail_breaks(pd.Series([5.0]), n_iterations=4)
+        assert breaks == [pytest.approx(5.0)]
+
+    def test_nan_values_are_ignored(self) -> None:
+        # NaN should not affect the mean; [1, NaN, 3] → effective values [1, 3], mean=2
+        values = pd.Series([1.0, float("nan"), 3.0])
+        breaks = head_tail_breaks(values, n_iterations=1)
+        assert breaks == [pytest.approx(2.0)]
+
+    def test_all_nan_returns_empty(self) -> None:
+        values = pd.Series([float("nan"), float("nan")])
+        breaks = head_tail_breaks(values, n_iterations=4)
+        assert breaks == []
+
+    def test_breaks_are_strictly_increasing(self) -> None:
+        # Each break is the mean of a strictly smaller subset, so it must be larger
+        values = pd.Series([1.0, 2.0, 4.0, 8.0, 16.0])
+        breaks = head_tail_breaks(values, n_iterations=3)
+        for i in range(len(breaks) - 1):
+            assert breaks[i] < breaks[i + 1]
+
+    def test_zero_iterations_returns_empty(self) -> None:
+        values = pd.Series([1.0, 2.0, 3.0])
+        breaks = head_tail_breaks(values, n_iterations=0)
+        assert breaks == []
+
+
+class TestClassifyRisk:
+    """Unit tests for classify_risk()."""
+
+    def test_no_breaks_assigns_all_class_zero(self) -> None:
+        values = pd.Series([0.0, 1.0, 999.0])
+        result = classify_risk(values, [])
+        assert list(result) == [0, 0, 0]
+
+    def test_below_first_break_is_class_zero(self) -> None:
+        values = pd.Series([1.0, 2.0])
+        result = classify_risk(values, [3.0, 6.0])
+        assert result.iloc[0] == 0
+        assert result.iloc[1] == 0
+
+    def test_at_break_boundary_is_lower_class(self) -> None:
+        # value == break → class below (right-inclusive: value ≤ break → same class as below)
+        values = pd.Series([3.0])
+        result = classify_risk(values, [3.0, 6.0])
+        assert result.iloc[0] == 0
+
+    def test_just_above_break_is_next_class(self) -> None:
+        values = pd.Series([3.0 + 1e-12])
+        result = classify_risk(values, [3.0, 6.0])
+        assert result.iloc[0] == 1
+
+    def test_above_last_break_is_highest_class(self) -> None:
+        values = pd.Series([100.0])
+        result = classify_risk(values, [3.0, 6.0])
+        assert result.iloc[0] == 2  # n = len(breaks)
+
+    def test_nan_input_produces_na_output(self) -> None:
+        values = pd.Series([1.0, float("nan"), 5.0])
+        result = classify_risk(values, [3.0])
+        assert result.iloc[0] == 0
+        assert pd.isna(result.iloc[1])
+        assert result.iloc[2] == 1
+
+    def test_index_preserved(self) -> None:
+        idx = [10, 20, 30]
+        values = pd.Series([1.0, 4.0, 8.0], index=idx)
+        result = classify_risk(values, [3.0, 6.0])
+        assert list(result.index) == idx
+
+    def test_class_count_equals_breaks_plus_one(self) -> None:
+        # With 3 breaks we expect at most 4 distinct classes (0..3)
+        values = pd.Series([0.1, 1.5, 2.5, 5.0, 10.0])
+        breaks = [1.0, 2.0, 4.0]
+        result = classify_risk(values, breaks)
+        assert result.max() <= len(breaks)
+
+
+class TestRunClassificationPipeline:
+    """Unit tests for run_classification_pipeline()."""
+
+    def test_returns_classification_result(self) -> None:
+        df = _classification_df()
+        out = run_classification_pipeline(df, n_iterations=2)
+        assert isinstance(out, ClassificationResult)
+
+    def test_output_contains_class_columns(self) -> None:
+        df = _classification_df()
+        out = run_classification_pipeline(df, n_iterations=2)
+        assert RISK_CLASS_WELL_BEING in out.data.columns
+        assert RISK_CLASS_MOBILITY_ACCESSIBILITY in out.data.columns
+
+    def test_input_columns_preserved(self) -> None:
+        df = _classification_df()
+        out = run_classification_pipeline(df, n_iterations=2)
+        for col in df.columns:
+            assert col in out.data.columns
+
+    def test_breaks_wb_length_at_most_n_iterations(self) -> None:
+        df = _classification_df()
+        out = run_classification_pipeline(df, n_iterations=3)
+        assert len(out.breaks_well_being) <= 3
+
+    def test_breaks_ma_length_at_most_n_iterations(self) -> None:
+        df = _classification_df()
+        out = run_classification_pipeline(df, n_iterations=3)
+        assert len(out.breaks_mobility_accessibility) <= 3
+
+    def test_all_buildings_receive_a_class(self) -> None:
+        df = _classification_df()
+        out = run_classification_pipeline(df, n_iterations=2)
+        assert not out.data[RISK_CLASS_WELL_BEING].isna().any()
+        assert not out.data[RISK_CLASS_MOBILITY_ACCESSIBILITY].isna().any()
+
+    def test_min_class_is_zero(self) -> None:
+        df = _classification_df()
+        out = run_classification_pipeline(df, n_iterations=2)
+        assert out.data[RISK_CLASS_WELL_BEING].min() == 0
+        assert out.data[RISK_CLASS_MOBILITY_ACCESSIBILITY].min() == 0
+
+    def test_max_class_leq_n_iterations(self) -> None:
+        df = _classification_df()
+        n = 2
+        out = run_classification_pipeline(df, n_iterations=n)
+        assert out.data[RISK_CLASS_WELL_BEING].max() <= n
+        assert out.data[RISK_CLASS_MOBILITY_ACCESSIBILITY].max() <= n
+
+    def test_higher_risk_gets_higher_or_equal_class(self) -> None:
+        """Monotone relationship: sorted risk values produce non-decreasing classes."""
+        df = _classification_df()
+        out = run_classification_pipeline(df, n_iterations=3)
+        pfr_sorted = df[PLUVIAL_FLOOD_RISK_WELL_BEING].sort_values().index
+        classes = out.data.loc[pfr_sorted, RISK_CLASS_WELL_BEING].to_numpy()
+        assert all(classes[i] <= classes[i + 1] for i in range(len(classes) - 1))
+
+    def test_wb_and_ma_classified_independently(self) -> None:
+        """Classes for WB and MA are computed from their respective risk columns."""
+        # Make WB all the same but MA varied — WB should collapse to one break at most
+        df = _classification_df(
+            **{
+                PLUVIAL_FLOOD_RISK_WELL_BEING: [5.0, 5.0, 5.0, 5.0],
+                PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY: [1.0, 2.0, 4.0, 8.0],
+            }
         )
+        out = run_classification_pipeline(df, n_iterations=3)
+        # WB: all equal → one break (the mean), then halt; all buildings get class 0
+        assert len(out.breaks_well_being) == 1
+        assert (out.data[RISK_CLASS_WELL_BEING] == 0).all()
+        # MA: varied → multiple breaks possible
+        assert len(out.breaks_mobility_accessibility) >= 1
