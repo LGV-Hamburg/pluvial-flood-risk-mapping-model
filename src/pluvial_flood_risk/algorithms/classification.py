@@ -117,22 +117,18 @@ def classify_risk(values: pd.Series, breaks: list[float]) -> pd.Series:
         Nullable integer class labels (``pd.Int64Dtype``), same index as
         *values*.
     """
-    result = pd.array([pd.NA] * len(values), dtype="Int64")  # nullable int
-    valid_mask = values.notna().to_numpy()
-    if valid_mask.any():
-        if breaks:
-            bins = np.array(breaks, dtype=float)
-            # np.digitize with right=True gives:
-            #   0       for x ≤ bins[0]
-            #   k       for bins[k-1] < x ≤ bins[k]
-            #   len(bins) for x > bins[-1]
-            classes = np.digitize(
-                values[valid_mask].to_numpy(dtype=float), bins, right=True
-            )
-        else:
-            classes = np.zeros(int(valid_mask.sum()), dtype=np.intp)
-        result[valid_mask] = classes
-    return pd.Series(result, index=values.index)
+    # np.digitize with right=True gives:
+    #   0          for x ≤ bins[0]
+    #   k          for bins[k-1] < x ≤ bins[k]
+    #   len(bins)  for x > bins[-1]
+    # Works correctly with an empty bins array (all values → class 0).
+    valid = values.dropna()
+    result = pd.Series(pd.NA, index=values.index, dtype="Int64")
+    classes = np.digitize(
+        valid.to_numpy(dtype=float), np.array(breaks, dtype=float), right=True
+    )
+    result.loc[valid.index] = classes
+    return result
 
 
 # ---------------------------------------------------------------------------
