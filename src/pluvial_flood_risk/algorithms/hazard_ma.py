@@ -158,7 +158,6 @@ def compute_mobility_flood_fractions(
     # ------------------------------------------------------------------
     streets_poly = streets.copy()
     if streets_poly.geom_type.isin(["LineString", "MultiLineString"]).any():
-        streets_poly = streets_poly.copy()
         streets_poly["geometry"] = streets_poly.geometry.buffer(0.5)
 
     # ------------------------------------------------------------------
@@ -185,13 +184,14 @@ def compute_mobility_flood_fractions(
         DataFrame with columns ``flooded_area_m2`` and ``flooded_fraction``,
         indexed by building id.  Buildings absent from the intersection get 0.
         """
+        _empty = pd.DataFrame(
+            {
+                "flooded_area_m2": pd.Series(dtype=float),
+                "flooded_fraction": pd.Series(dtype=float),
+            },
+        )
         if zone_gdf.empty:
-            return pd.DataFrame(
-                {
-                    "flooded_area_m2": pd.Series(dtype=float),
-                    "flooded_fraction": pd.Series(dtype=float),
-                },
-            )
+            return _empty
 
         zone_gdf = zone_gdf[[building_id_col, "geometry"]].copy()
 
@@ -202,12 +202,7 @@ def compute_mobility_flood_fractions(
         # Intersect zone polygons with the flood layer
         flooded = gpd.overlay(zone_gdf, flood_union, how="intersection")
         if flooded.empty:
-            return pd.DataFrame(
-                {
-                    "flooded_area_m2": pd.Series(dtype=float),
-                    "flooded_fraction": pd.Series(dtype=float),
-                },
-            )
+            return _empty
 
         flooded["flooded_area_m2"] = flooded.geometry.area
         flooded_sum = flooded.groupby(building_id_col)["flooded_area_m2"].sum()
@@ -229,9 +224,6 @@ def compute_mobility_flood_fractions(
     b5["geometry"] = b5.geometry.buffer(params.buffer_zone1_m)
     # Erase building footprint from buffer
     bu5 = gpd.overlay(b5, buildings_union, how="difference")
-    # Restore building id (overlay may drop it on empty difference)
-    if building_id_col not in bu5.columns:
-        bu5[building_id_col] = bu5.index
     tab5 = _tabulate(bu5)
 
     # ------------------------------------------------------------------
@@ -241,13 +233,8 @@ def compute_mobility_flood_fractions(
     b15["geometry"] = b15.geometry.buffer(params.buffer_zone2_m)
     # Erase buildings from buffer ring
     bu15 = gpd.overlay(b15, buildings_union, how="difference")
-    if building_id_col not in bu15.columns:
-        bu15[building_id_col] = bu15.index
     # Clip to street polygons
     bus15 = gpd.overlay(streets_poly, bu15, how="intersection")
-    if building_id_col not in bus15.columns and not bus15.empty:
-        # overlay may rename the id column — try to recover it
-        bus15[building_id_col] = bus15.get(building_id_col, pd.NA)
     tab15 = _tabulate(bus15)
 
     # ------------------------------------------------------------------
@@ -263,12 +250,8 @@ def compute_mobility_flood_fractions(
     b1530["geometry"] = b15.geometry.buffer(ring_width)
     # Ring = B1530 \ B15
     b1530 = gpd.overlay(b1530, b15, how="difference")
-    if building_id_col not in b1530.columns:
-        b1530[building_id_col] = b1530.index
     # Clip to streets
     bus30 = gpd.overlay(streets_poly, b1530, how="intersection")
-    if building_id_col not in bus30.columns and not bus30.empty:
-        bus30[building_id_col] = bus30.get(building_id_col, pd.NA)
     tab30 = _tabulate(bus30)
 
     # ------------------------------------------------------------------
