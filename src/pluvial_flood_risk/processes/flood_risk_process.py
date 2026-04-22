@@ -487,18 +487,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         return gdf.to_crs(utm)
 
     @staticmethod
-    def _feature_id(feature: dict) -> str:
-        """Extract the building identifier from a GeoJSON feature as string."""
-        feature_id = feature.get("id") or feature.get("properties", {}).get("id")
-        if feature_id is None:
-            raise ValueError(
-                "Each building feature must provide an id either at the feature "
-                "top level or in properties.id."
-            )
-
-        # feature id to string (
-        # ensure consistent dict keys for parallel branches, and JSON serialisability)
-        return str(feature_id)
+    def _parse_fc(features: list) -> gpd.GeoDataFrame:
+        """Parse a GeoJSON features list into a GeoDataFrame, defaulting CRS to EPSG:4326."""
+        gdf = gpd.GeoDataFrame.from_features(features)
+        if gdf.crs is None:
+            gdf = gdf.set_crs("EPSG:4326")
+        return gdf
 
     @staticmethod
     def _json_scalar(value):
@@ -568,11 +562,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         buildings_fc: dict = inputs["buildings"]
         params = PipelineParams.model_validate(inputs.get("params", {}))
 
-        # Parse GeoJSON → GeoDataFrame so we can derive footprint area from geometry.
-        gdf = gpd.GeoDataFrame.from_features(buildings_fc["features"])
-        if gdf.crs is None:
-            gdf = gdf.set_crs("EPSG:4326")
-        # Project to a metric CRS for accurate area computation.
+        gdf = self._parse_fc(buildings_fc["features"])
         gdf_metric = self._to_metric(gdf, params.target_crs)
         gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
 
@@ -592,9 +582,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "'statistical_units' FeatureCollection input so the "
                     "values can be joined automatically."
                 )
-            stat_gdf = gpd.GeoDataFrame.from_features(stat_units_fc["features"])
-            if stat_gdf.crs is None:
-                stat_gdf = stat_gdf.set_crs("EPSG:4326")
+            stat_gdf = self._parse_fc(stat_units_fc["features"])
             gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
 
         # Recover the building id used as dict key (keep it in index).
@@ -631,18 +619,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         flood_layers_fc: dict = inputs["flood_layers"]
         params = PipelineParams.model_validate(inputs.get("params", {}))
 
-        # Parse buildings → GeoDataFrame, project to metric CRS.
-        buildings_gdf = gpd.GeoDataFrame.from_features(buildings_fc["features"])
-        if buildings_gdf.crs is None:
-            buildings_gdf = buildings_gdf.set_crs("EPSG:4326")
+        buildings_gdf = self._parse_fc(buildings_fc["features"])
         buildings_metric = self._to_metric(buildings_gdf, params.target_crs)
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
-        # Parse all flood depth classes → same projected CRS.
-        flood_gdf = gpd.GeoDataFrame.from_features(flood_layers_fc["features"])
-        if flood_gdf.crs is None:
-            flood_gdf = flood_gdf.set_crs("EPSG:4326")
+        flood_gdf = self._parse_fc(flood_layers_fc["features"])
         flood_metric = self._to_metric(flood_gdf, params.target_crs, buildings_gdf)
 
         result_df = run_hazard_wb_pipeline(
@@ -673,18 +655,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         flood_layers_fc: dict = inputs["flood_layers"]
         params = PipelineParams.model_validate(inputs.get("params", {}))
 
-        # Parse buildings → GeoDataFrame, project to metric CRS.
-        buildings_gdf = gpd.GeoDataFrame.from_features(buildings_fc["features"])
-        if buildings_gdf.crs is None:
-            buildings_gdf = buildings_gdf.set_crs("EPSG:4326")
+        buildings_gdf = self._parse_fc(buildings_fc["features"])
         buildings_metric = self._to_metric(buildings_gdf, params.target_crs)
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
-        # Parse streets → same projected CRS (derive from buildings when auto).
-        streets_gdf = gpd.GeoDataFrame.from_features(streets_fc["features"])
-        if streets_gdf.crs is None:
-            streets_gdf = streets_gdf.set_crs("EPSG:4326")
+        streets_gdf = self._parse_fc(streets_fc["features"])
         streets_metric = self._to_metric(streets_gdf, params.target_crs, buildings_gdf)
 
         # Filter flood features to the configured MA depth class.
@@ -705,9 +681,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 f"No flood features found with level_cm={ma_level} in "
                 f"'flood_layers'. Available levels: {available}"
             )
-        flood_gdf = gpd.GeoDataFrame.from_features(ma_features)
-        if flood_gdf.crs is None:
-            flood_gdf = flood_gdf.set_crs("EPSG:4326")
+        flood_gdf = self._parse_fc(ma_features)
         flood_metric = self._to_metric(flood_gdf, params.target_crs, buildings_gdf)
 
         result_df = run_hazard_ma_pipeline(
@@ -797,7 +771,13 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
 
         enriched_features: list[dict] = []
         for feature in source_features:
-            building_id = self._feature_id(feature)
+            feature_id = feature.get("id") or feature.get("properties", {}).get("id")
+            if feature_id is None:
+                raise ValueError(
+                    "Each building feature must provide an id either at the feature "
+                    "top level or in properties.id."
+                )
+            building_id = str(feature_id)
             if building_id not in classified.data.index:
                 raise ValueError(
                     f"Missing merged results for building id {building_id!r}."
