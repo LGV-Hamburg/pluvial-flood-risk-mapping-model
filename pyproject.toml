@@ -100,6 +100,7 @@ pre-commit = ">=4.0"
 addopts = "-v"
 markers = [
     "integration: marks tests as integration tests that require a running Redis instance (deselect with '-m \"not integration\"')",
+    "e2e: marks tests that call a running API/worker/redis stack (deselect with '-m \"not e2e\"')",
     "regression: marks tests as regression tests using real example data (no external services required)",
 ]
 
