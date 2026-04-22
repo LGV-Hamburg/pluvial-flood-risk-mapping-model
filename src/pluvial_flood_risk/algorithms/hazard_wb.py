@@ -58,8 +58,6 @@ Open-source equivalents of the arcpy operations
 
 from __future__ import annotations
 
-import re
-
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -75,7 +73,6 @@ from ..models.inputs import HazardParams
 
 _FRACTION_PREFIX = "flooded_fraction_2m_"
 _AREA_PREFIX = "flooded_area_m2_2m_"
-_DEPTH_SUFFIX_RE = re.compile(r"^flooded_fraction_2m_(\d+)cm$")
 
 
 def flooded_fraction_col(depth_cm: int) -> str:
@@ -86,16 +83,6 @@ def flooded_fraction_col(depth_cm: int) -> str:
 def flooded_area_col(depth_cm: int) -> str:
     """Column name for the flooded area [m²] in the 2 m buffer at *depth_cm* cm."""
     return f"{_AREA_PREFIX}{depth_cm}cm"
-
-
-def _depth_classes_from_df(df: pd.DataFrame) -> list[int]:
-    """Return sorted depth classes detected from the fraction column names."""
-    depths = []
-    for col in df.columns:
-        m = _DEPTH_SUFFIX_RE.match(col)
-        if m:
-            depths.append(int(m.group(1)))
-    return sorted(depths)
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +165,6 @@ def compute_wb_flood_fractions(
         crs=bld.crs,
     )
     bu2 = gpd.overlay(bu2, buildings_union, how="difference")
-    if building_id_col not in bu2.columns:
-        bu2[building_id_col] = bu2.index
 
     # Pre-compute zone area per building (same for all depth classes)
     bu2["zone_area_m2"] = bu2.geometry.area
@@ -230,15 +215,10 @@ def compute_wb_flood_fractions(
             tab["flooded_area_m2"] / tab["zone_area_m2"],
             0.0,
         )
-        tab.rename(columns={"flooded_area_m2": area_col}, inplace=True)
+        tab = tab.rename(columns={"flooded_area_m2": area_col})
 
         result[area_col] = tab[area_col].reindex(all_ids, fill_value=0.0)
         result[frac_col] = tab[frac_col].reindex(all_ids, fill_value=0.0)
-
-    # Ensure at least one pair of columns exists (empty flood_layers edge case)
-    if result.empty or len(result.columns) == 0:
-        result[flooded_fraction_col(0)] = 0.0
-        result[flooded_area_col(0)] = 0.0
 
     return result
 
@@ -281,15 +261,13 @@ def compute_hazard_wb(
     if params is None:
         params = HazardParams()
 
-    depth_classes = _depth_classes_from_df(df)
+    frac_cols = [c for c in df.columns if c.startswith(_FRACTION_PREFIX)]
 
-    if not depth_classes:
+    if not frac_cols:
         return pd.Series(0.0, index=df.index, name=HAZARD_WELL_BEING)
 
     # Stack fraction columns → (n_buildings × n_depths) array
-    frac_matrix = np.column_stack(
-        [df[flooded_fraction_col(d)].to_numpy(dtype=float) for d in depth_classes]
-    )
+    frac_matrix = np.column_stack([df[c].to_numpy(dtype=float) for c in frac_cols])
 
     # Eq. 12: HWB = Σ lognorm.cdf(fraction × 4, σ)
     hwb = lognorm.cdf(frac_matrix * 4.0, s=params.lognormal_shape).sum(axis=1)
