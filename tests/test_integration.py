@@ -77,8 +77,6 @@ from pluvial_flood_risk.models.field_names import (
 # ---------------------------------------------------------------------------
 from pluvial_flood_risk.processes.flood_risk_process import PluvialFloodRiskProcess
 
-_RESULT_META_KEY = "__meta__"
-
 # ---------------------------------------------------------------------------
 # Helpers — compact GeoJSON polygon generator (Hamburg area)
 # ---------------------------------------------------------------------------
@@ -284,8 +282,7 @@ class TestVulnerabilityPipelineIntegration:
             SOCIAL_VULNERABILITY_INDEX,
             SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
         }
-        assert expected.issubset(result.keys())
-        assert _RESULT_META_KEY in result
+        assert set(result.keys()) == expected
 
     def test_all_building_ids_present(self, result: dict) -> None:
         for col in (
@@ -496,7 +493,7 @@ class TestMergeResultsIntegration:
             "hazard_wb_pipeline": process.hazard_wb_pipeline(exec_body_full),
             "hazard_ma_pipeline": process.hazard_ma_pipeline(exec_body_full),
         }
-        return process.merge_results(results)
+        return process.merge_results(results, exec_body_full)
 
     def test_returns_feature_collection(self, merged_result) -> None:
         assert merged_result.risk_features["type"] == "FeatureCollection"

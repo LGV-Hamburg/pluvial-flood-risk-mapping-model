@@ -59,8 +59,6 @@ from ..models.field_names import (
 from ..models.inputs import PipelineParams
 from ..spatial_utils import join_statistical_unit_attributes
 
-_RESULT_META_KEY = "__meta__"
-
 # ---------------------------------------------------------------------------
 # Output model
 # ---------------------------------------------------------------------------
@@ -539,15 +537,10 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             SOCIAL_VULNERABILITY_INDEX,
             SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
         ]
-        result = {
+        return {
             col: result_df[col].where(result_df[col].notna(), other=None).to_dict()
             for col in output_columns
         }
-        result[_RESULT_META_KEY] = {
-            "buildings": buildings_fc["features"],
-            "params": inputs.get("params", {}),
-        }
-        return result
 
     @parallel_step
     def exposure_pipeline(self, exec_body: dict) -> dict:
@@ -701,11 +694,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     # results = {step_name: result_dict}
     # ------------------------------------------------------------------
 
-    def merge_results(self, results: dict[str, dict]) -> RiskResult:
+    def merge_results(self, results: dict[str, dict], exec_body: dict) -> RiskResult:
         """Merge partial results, calculate risk indices (Eq. 14/15), classify.
 
         Args:
             results: Mapping of step name → dict returned by that branch.
+            exec_body: The original process execution body.
 
         Returns:
             RiskResult with GeoJSON FeatureCollection and classification breaks.
@@ -722,13 +716,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 f"merge_results is missing required step outputs: {missing_steps}"
             )
 
-        vulnerability_result = results["vulnerability_pipeline"]
-        meta = vulnerability_result.get(_RESULT_META_KEY)
-        if meta is None:
-            raise ValueError("vulnerability_pipeline result is missing merge metadata.")
-
-        source_features = meta.get("buildings", [])
-        params = PipelineParams.model_validate(meta.get("params", {}))
+        inputs: dict = exec_body["inputs"]
+        source_features = inputs["buildings"]["features"]
+        params = PipelineParams.model_validate(inputs.get("params", {}))
 
         partial_frames: list[pd.DataFrame] = []
         for step_name in required_steps:
@@ -739,7 +729,6 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     index=[str(building_id) for building_id in values.keys()],
                 )
                 for column, values in step_result.items()
-                if column != _RESULT_META_KEY
             }
             partial_frames.append(pd.DataFrame(step_columns))
 
