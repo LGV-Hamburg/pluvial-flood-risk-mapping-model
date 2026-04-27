@@ -12,7 +12,7 @@ GIT_COMMIT := $(shell git rev-parse --short HEAD)
 all: lock build-image run-local
 
 lock:
-@echo 'Creating poetry lockfile'
+	@echo 'Creating poetry lockfile'
 	poetry lock
 
 
