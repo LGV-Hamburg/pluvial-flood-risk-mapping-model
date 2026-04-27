@@ -29,7 +29,9 @@ ARG USERNAME=pythonuser
 ARG USER_GID=2000
 ARG SOURCE_COMMIT
 
-LABEL maintainer="Stefan Schuhart" name="analytics/pluvial-flood-risk" source_commit=$SOURCE_COMMIT
+LABEL maintainer="Stefan Schuhart" \
+      name="analytics/pluvial-flood-risk" \
+      source_commit=$SOURCE_COMMIT
 
 # add user and group
 RUN groupadd --gid $USER_GID $USERNAME && \
@@ -45,5 +47,7 @@ COPY --from=base \
     --chmod=0755 \
     --chown=$USERNAME:$USERNAME \
     ${VIRTUAL_ENV} ./.venv
+
+COPY --chown=$USERNAME:$USER_GID app.py ./
 
 ENV PYTHONUNBUFFERED 1
