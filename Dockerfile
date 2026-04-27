@@ -1,4 +1,4 @@
-FROM python:3.14-bookworm as base
+FROM python:3.13-bookworm as base
 
 ENV CACHE_DIR=/app/cache
 
@@ -22,7 +22,7 @@ RUN touch README.md \
     && poetry build \
     && /app/.venv/bin/python -m pip install dist/*.whl --no-deps
 
-FROM python:3.14-slim-bookworm as runtime
+FROM python:3.13-slim-bookworm as runtime
 
 ARG USER_UID=1000
 ARG USERNAME=pythonuser
@@ -36,10 +36,10 @@ RUN groupadd --gid $USER_GID $USERNAME && \
     useradd --create-home --no-log-init --gid $USER_GID --uid $USER_UID --shell /bin/bash $USERNAME && \
     chown -R $USERNAME:$USERNAME /home/$USERNAME /usr/local/lib /usr/local/bin
 
-WORKDIR /home/$USERNAME
+WORKDIR /app
 
-ENV VIRTUAL_ENV=/home/$USERNAME/.venv \
-    PATH="/home/$USERNAME/.venv/bin:$PATH"
+ENV VIRTUAL_ENV=/app/.venv \
+    PATH="/app/.venv/bin:$PATH"
 
 COPY --from=base \
     --chmod=0755 \
