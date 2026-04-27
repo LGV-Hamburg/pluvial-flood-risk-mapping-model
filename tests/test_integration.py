@@ -57,13 +57,16 @@ import pytest
 
 from pluvial_flood_risk.models.field_names import (
     BUILDING_LIVING_AREA_M2,
+    BUILDING_TYPE,
     COPING_CAPACITY_INDEX,
     EXPOSURE_MOBILITY_ACCESSIBILITY,
+    FLOORS_ABOVE_GROUND,
     HAZARD_MOBILITY_ACCESSIBILITY,
     HAZARD_WELL_BEING,
     PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
     PLUVIAL_FLOOD_RISK_WELL_BEING,
     RESIDENTS_GROUND_FLOOR,
+    RESIDENTS_IN_STATISTICAL_UNIT,
     RESIDENTS_PER_BUILDING,
     RISK_CLASS_MOBILITY_ACCESSIBILITY,
     RISK_CLASS_WELL_BEING,
@@ -495,6 +498,31 @@ class TestMergeResultsIntegration:
         }
         return process.merge_results(results, exec_body_full)
 
+    @pytest.fixture(scope="class")
+    def merged_result_with_input_props(
+        self,
+        process: PluvialFloodRiskProcess,
+        exec_body_full: dict,
+    ):
+        body = copy.deepcopy(exec_body_full)
+        body["inputs"]["params"] = {
+            "output": {
+                "include_input_building_properties": True,
+                "decimal_precision": 2,
+            }
+        }
+        body["inputs"]["buildings"]["features"][0]["properties"]["Shape_Area"] = 123.456
+        body["inputs"]["buildings"]["features"][0]["properties"]["Shape_Length"] = (
+            78.901
+        )
+        results = {
+            "vulnerability_pipeline": process.vulnerability_pipeline(body),
+            "exposure_pipeline": process.exposure_pipeline(body),
+            "hazard_wb_pipeline": process.hazard_wb_pipeline(body),
+            "hazard_ma_pipeline": process.hazard_ma_pipeline(body),
+        }
+        return process.merge_results(results, body)
+
     def test_returns_feature_collection(self, merged_result) -> None:
         assert merged_result.risk_features["type"] == "FeatureCollection"
         assert len(merged_result.risk_features["features"]) == 3
@@ -511,6 +539,36 @@ class TestMergeResultsIntegration:
             assert RISK_CLASS_WELL_BEING in props
             assert RISK_CLASS_MOBILITY_ACCESSIBILITY in props
 
+    def test_excludes_input_properties_by_default(self, merged_result) -> None:
+        props = merged_result.risk_features["features"][0]["properties"]
+        assert FLOORS_ABOVE_GROUND not in props
+        assert BUILDING_TYPE not in props
+        assert RESIDENTS_IN_STATISTICAL_UNIT not in props
+
+    def test_includes_selected_input_properties_when_requested(
+        self,
+        merged_result_with_input_props,
+    ) -> None:
+        props = merged_result_with_input_props.risk_features["features"][0][
+            "properties"
+        ]
+        assert FLOORS_ABOVE_GROUND in props
+        assert BUILDING_TYPE in props
+        assert RESIDENTS_IN_STATISTICAL_UNIT in props
+        assert "Shape_Area" not in props
+        assert "Shape_Length" not in props
+
+    def test_rounds_output_values(self, merged_result_with_input_props) -> None:
+        props = merged_result_with_input_props.risk_features["features"][0][
+            "properties"
+        ]
+        value = props[SENSITIVITY_INDEX]
+        assert value == round(value, 2)
+
+    def test_rounds_classification_breaks(self, merged_result_with_input_props) -> None:
+        for value in merged_result_with_input_props.classification_breaks_ma:
+            assert value == round(value, 2)
+
     def test_step_5_wb_depends_on_steps_1_2_4(self, merged_result) -> None:
         for feature in merged_result.risk_features["features"]:
             props = feature["properties"]
@@ -519,7 +577,10 @@ class TestMergeResultsIntegration:
                 * props[RESIDENTS_GROUND_FLOOR]
                 * props[HAZARD_WELL_BEING]
             )
-            assert props[PLUVIAL_FLOOD_RISK_WELL_BEING] == pytest.approx(expected)
+            assert props[PLUVIAL_FLOOD_RISK_WELL_BEING] == pytest.approx(
+                expected,
+                abs=2e-3,
+            )
 
     def test_step_5_ma_depends_on_steps_1_2_3(self, merged_result) -> None:
         for feature in merged_result.risk_features["features"]:
@@ -530,7 +591,8 @@ class TestMergeResultsIntegration:
                 * props[HAZARD_MOBILITY_ACCESSIBILITY]
             )
             assert props[PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY] == pytest.approx(
-                expected
+                expected,
+                abs=2e-3,
             )
 
     def test_returns_classification_breaks(self, merged_result) -> None:
