@@ -1,5 +1,3 @@
-ARG $MAMBA_USER=mambauser
-
 FROM python:3.14-bookworm as base
 
 ENV CACHE_DIR=/app/cache
@@ -40,7 +38,7 @@ RUN groupadd --gid $USER_GID $USERNAME && \
 
 WORKDIR /home/$USERNAME
 
-ENV VIRTUAL_ENV=/home/.venv \
+ENV VIRTUAL_ENV=/home/$USERNAME/.venv \
     PATH="/home/$USERNAME/.venv/bin:$PATH"
 
 COPY --from=base \
