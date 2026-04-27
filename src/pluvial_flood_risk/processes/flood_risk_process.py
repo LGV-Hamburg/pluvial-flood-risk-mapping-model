@@ -40,11 +40,16 @@ from ..algorithms.vulnerability import run_vulnerability_pipeline
 from ..models.field_names import (
     BUILDING_FOOTPRINT_AREA_M2,
     BUILDING_LIVING_AREA_M2,
+    BUILDING_TYPE,
+    CHILDREN_UNDER_10,
     COPING_CAPACITY_INDEX,
+    ELDERLY_SINGLES_OVER_65,
     EXPOSURE_MOBILITY_ACCESSIBILITY,
+    FLOORS_ABOVE_GROUND,
     HAZARD_MOBILITY_ACCESSIBILITY,
     HAZARD_WELL_BEING,
     LIVING_AREA_M2_STATISTICAL_UNIT,
+    NO_HIGHSCHOOL_DIPLOMA,
     PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
     PLUVIAL_FLOOD_RISK_WELL_BEING,
     RESIDENTS_GROUND_FLOOR,
@@ -55,9 +60,23 @@ from ..models.field_names import (
     SENSITIVITY_INDEX,
     SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
     SOCIAL_VULNERABILITY_INDEX,
+    SOCIAL_WELFARE_RECIPIENTS,
+    STATISTICAL_UNIT_ID,
 )
 from ..models.inputs import PipelineParams
 from ..spatial_utils import join_statistical_unit_attributes
+
+_INPUT_BUILDING_OUTPUT_COLUMNS = [
+    FLOORS_ABOVE_GROUND,
+    BUILDING_TYPE,
+    CHILDREN_UNDER_10,
+    ELDERLY_SINGLES_OVER_65,
+    SOCIAL_WELFARE_RECIPIENTS,
+    NO_HIGHSCHOOL_DIPLOMA,
+    STATISTICAL_UNIT_ID,
+    RESIDENTS_IN_STATISTICAL_UNIT,
+    LIVING_AREA_M2_STATISTICAL_UNIT,
+]
 
 # ---------------------------------------------------------------------------
 # Output model
@@ -393,6 +412,35 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                                 },
                             }
                         ),
+                        "output": Schema.model_validate(
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "include_input_building_properties": {
+                                        "type": "boolean",
+                                        "default": False,
+                                        "description": (
+                                            "Include selected original building "
+                                            "properties in the output feature "
+                                            "properties."
+                                        ),
+                                    },
+                                    "decimal_precision": {
+                                        "anyOf": [
+                                            {"type": "integer", "minimum": 0},
+                                            {"type": "null"},
+                                        ],
+                                        "minimum": 0,
+                                        "default": 4,
+                                        "description": (
+                                            "Number of decimal places used for "
+                                            "serialized floating-point outputs. "
+                                            "Set to null to disable rounding."
+                                        ),
+                                    },
+                                },
+                            }
+                        ),
                     },
                 ),
                 minOccurs=0,
@@ -500,6 +548,17 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         if hasattr(value, "item"):
             return value.item()
         return value
+
+    @classmethod
+    def _serialize_output_value(cls, value, decimal_precision: int | None):
+        """Convert output values to JSON-safe scalars with optional rounding."""
+        scalar = cls._json_scalar(value)
+        if scalar is None or decimal_precision is None:
+            return scalar
+        if isinstance(scalar, float):
+            rounded = round(scalar, decimal_precision)
+            return 0.0 if rounded == 0 else rounded
+        return scalar
 
     # ------------------------------------------------------------------
     # Parallel branches
@@ -771,10 +830,21 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 raise ValueError(
                     f"Missing merged results for building id {building_id!r}."
                 )
-            properties = dict(feature.get("properties", {}))
+            source_properties = feature.get("properties", {})
+            if params.output.include_input_building_properties:
+                properties = {
+                    column: source_properties[column]
+                    for column in _INPUT_BUILDING_OUTPUT_COLUMNS
+                    if column in source_properties
+                }
+            else:
+                properties = {}
             row = classified.data.loc[building_id]
             for column in output_columns:
-                properties[column] = self._json_scalar(row[column])
+                properties[column] = self._serialize_output_value(
+                    row[column],
+                    params.output.decimal_precision,
+                )
             enriched_features.append(
                 {
                     **feature,
@@ -788,6 +858,18 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         }
         return RiskResult(
             risk_features=risk_features,
-            classification_breaks_wb=classified.breaks_well_being,
-            classification_breaks_ma=classified.breaks_mobility_accessibility,
+            classification_breaks_wb=[
+                self._serialize_output_value(
+                    value,
+                    params.output.decimal_precision,
+                )
+                for value in classified.breaks_well_being
+            ],
+            classification_breaks_ma=[
+                self._serialize_output_value(
+                    value,
+                    params.output.decimal_precision,
+                )
+                for value in classified.breaks_mobility_accessibility
+            ],
         )

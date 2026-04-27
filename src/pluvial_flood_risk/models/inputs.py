@@ -184,6 +184,31 @@ class RiskWeights(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Output formatting
+# ---------------------------------------------------------------------------
+
+
+class OutputParams(BaseModel):
+    """Controls for the serialized GeoJSON output payload."""
+
+    include_input_building_properties: bool = Field(
+        default=False,
+        description=(
+            "Include selected original building input properties in the output "
+            "feature properties in addition to computed pipeline outputs."
+        ),
+    )
+    decimal_precision: int | None = Field(
+        default=4,
+        ge=0,
+        description=(
+            "Number of decimal places used for serialized floating-point output "
+            "values. Set to null to disable rounding."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Top-level pipeline parameters
 # ---------------------------------------------------------------------------
 
@@ -202,6 +227,7 @@ class PipelineParams(BaseModel):
     vulnerability: VulnerabilityParams = Field(default_factory=VulnerabilityParams)
     hazard: HazardParams = Field(default_factory=HazardParams)
     risk_weights: RiskWeights = Field(default_factory=RiskWeights)
+    output: OutputParams = Field(default_factory=OutputParams)
     n_classification_iterations: int = Field(
         default=4,
         ge=1,
