@@ -393,23 +393,29 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                                         "default": 4,
                                         "description": "Number of head/tail break iterations for risk classification",
                                     },
-                                    "target_crs": {
-                                        "type": "string",
-                                        "default": None,
-                                        "examples": [
-                                            "EPSG:25832",
-                                            "EPSG:32632",
-                                            "EPSG:2263",
-                                        ],
-                                        "description": (
-                                            "EPSG code of the projected (metric) CRS for spatial "
-                                            "calculations. Omit to auto-detect UTM zone from the "
-                                            "input data centroid. Required when inputs are already "
-                                            "in a local projected CRS (e.g. 'EPSG:25832' for "
-                                            "Hamburg / ETRS89 UTM-32N)."
-                                        ),
-                                    },
                                 },
+                            }
+                        ),
+                        "target_crs": Schema.model_validate(
+                            {
+                                "type": "string",
+                                "default": None,
+                                "examples": [
+                                    "EPSG:25832",
+                                    "http://www.opengis.net/def/crs/EPSG/0/25832",
+                                    "urn:ogc:def:crs:EPSG::25832",
+                                    "EPSG:32632",
+                                    "EPSG:2263",
+                                ],
+                                "description": (
+                                    "CRS identifier for all spatial calculations. "
+                                    "Accepted forms include EPSG tokens, OGC CRS URIs, "
+                                    "OGC URNs, and proj strings. Required when inputs "
+                                    "carry projected (metric) coordinates (e.g. "
+                                    "'EPSG:25832' for Hamburg / ETRS89 UTM-32N). Omit "
+                                    "for standard WGS-84 GeoJSON — UTM zone is then "
+                                    "auto-detected from the input data centroid."
+                                ),
                             }
                         ),
                         "output": Schema.model_validate(
@@ -500,7 +506,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _to_metric(
+    def _project_crs_to_metric(
         gdf: gpd.GeoDataFrame,
         target_crs: str | None,
         fallback_gdf: gpd.GeoDataFrame | None = None,
@@ -533,8 +539,19 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         return gdf.to_crs(utm)
 
     @staticmethod
-    def _parse_fc(features: list) -> gpd.GeoDataFrame:
-        """Parse a GeoJSON features list into a GeoDataFrame, defaulting CRS to EPSG:4326."""
+    def _convert_geojson_to_gdf(features: list, source_crs: str | None = None) -> gpd.GeoDataFrame:
+        """Parse a GeoJSON features list into a GeoDataFrame.
+
+        Parameters
+        ----------
+        features:
+            GeoJSON feature list from a FeatureCollection.
+        source_crs:
+            CRS to assign when no CRS is embedded in the features.  Pass
+            ``params.target_crs`` whenever the input coordinates are already
+            in a projected system (e.g. ``'EPSG:25832'``).  Defaults to
+            ``'EPSG:4326'`` for standard WGS-84 GeoJSON.
+        """
         gdf = gpd.GeoDataFrame.from_features(features)
         if gdf.crs is None:
             gdf = gdf.set_crs("EPSG:4326")
@@ -614,8 +631,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         buildings_fc: dict = inputs["buildings"]
         params = PipelineParams.model_validate(inputs.get("params", {}))
 
-        gdf = self._parse_fc(buildings_fc["features"])
-        gdf_metric = self._to_metric(gdf, params.target_crs)
+        gdf = self._convert_geojson_to_gdf(buildings_fc["features"], params.target_crs)
+        gdf_metric = self._project_crs_to_metric(gdf, params.target_crs)
         gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
 
         # Join residents / living_area from statistical_units when not pre-joined.
@@ -634,7 +651,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "'statistical_units' FeatureCollection input so the "
                     "values can be joined automatically."
                 )
-            stat_gdf = self._parse_fc(stat_units_fc["features"])
+            stat_gdf = self._convert_geojson_to_gdf(stat_units_fc["features"], params.target_crs)
             gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
 
         # Recover the building id used as dict key (keep it in index).
@@ -676,8 +693,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
-        flood_gdf = self._parse_fc(flood_layers_fc["features"])
-        flood_metric = self._to_metric(flood_gdf, params.target_crs, buildings_gdf)
+        flood_gdf = self._convert_geojson_to_gdf(flood_layers_fc["features"], params.target_crs)
+        flood_metric = self._project_crs_to_metric(flood_gdf, params.target_crs, buildings_gdf)
 
         result_df = run_hazard_wb_pipeline(
             buildings_metric, flood_metric, params.hazard
@@ -733,8 +750,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 f"No flood features found with level_cm={ma_level} in "
                 f"'flood_layers'. Available levels: {available}"
             )
-        flood_gdf = self._parse_fc(ma_features)
-        flood_metric = self._to_metric(flood_gdf, params.target_crs, buildings_gdf)
+        flood_gdf = self._convert_geojson_to_gdf(ma_features, params.target_crs)
+        flood_metric = self._project_crs_to_metric(flood_gdf, params.target_crs, buildings_gdf)
 
         result_df = run_hazard_ma_pipeline(
             buildings_metric, streets_metric, flood_metric, params.hazard
