@@ -7,7 +7,9 @@ the paper.
 
 from __future__ import annotations
 
+from pyproj import CRS
 from pydantic import BaseModel, Field, model_validator
+from pydantic import field_validator
 
 # ---------------------------------------------------------------------------
 # Vulnerability (Steps 1.1-1.4)
@@ -239,9 +241,11 @@ class PipelineParams(BaseModel):
     target_crs: str | None = Field(
         default=None,
         description=(
-            "EPSG code or proj-string of the projected (metric) CRS to use for all "
+            "CRS identifier of the projected (metric) CRS to use for all "
             "spatial calculations (buffer, overlay, area). "
-            "Examples: 'EPSG:25832', 'EPSG:32632', 'EPSG:2263'. "
+            "Accepted forms include EPSG tokens (e.g. 'EPSG:25832'), "
+            "OGC URIs (e.g. 'http://www.opengis.net/def/crs/EPSG/0/25832'), "
+            "OGC URNs (e.g. 'urn:ogc:def:crs:EPSG::25832'), and proj strings. "
             "When set, every input layer is reprojected to this CRS regardless of "
             "its original CRS. "
             "When None (default): if the input data is already in a projected CRS "
@@ -250,3 +254,16 @@ class PipelineParams(BaseModel):
             "Must be a metric (linear unit = metres) CRS."
         ),
     )
+
+    @field_validator("target_crs")
+    @classmethod
+    def validate_target_crs(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("target_crs must not be an empty string")
+        try:
+            CRS.from_user_input(value)
+        except Exception as exc:
+            raise ValueError(f"Invalid target_crs identifier: {value!r}") from exc
+        return value
