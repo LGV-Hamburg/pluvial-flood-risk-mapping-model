@@ -1,0 +1,6 @@
+# Local Poetry configuration (not committed by default — adjust .gitignore as needed).
+# Keeps the virtual environment inside the project root at .venv/ so that editors
+# (VS Code, PyCharm, etc.) can discover it automatically.
+[virtualenvs]
+in-project = true
+create = true

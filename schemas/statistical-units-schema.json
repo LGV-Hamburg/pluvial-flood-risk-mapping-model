@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/statistical-units-schema.json",
+  "title": "Statistical Units",
+  "description": "Constraints for statistical unit features: required census attributes for resident and living-area join.",
+  "type": "object",
+  "properties": {
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "properties"],
+        "properties": {
+          "properties": {
+            "type": "object",
+            "required": ["statistical_unit_id", "residents", "living_area_m2"],
+            "properties": {
+              "statistical_unit_id": {
+                "type": ["integer", "string"],
+                "description": "Unique key matching building.statistical_unit_id"
+              },
+              "residents": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Total residents registered in this statistical unit"
+              },
+              "living_area_m2": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Total residential floor area [m\u00b2] of this statistical unit"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

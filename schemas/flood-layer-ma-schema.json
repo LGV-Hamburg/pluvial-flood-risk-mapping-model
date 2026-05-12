@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layer-ma-schema.json",
+  "title": "Flood Layer \u2014 Mobility & Accessibility",
+  "description": "Flooded-area FeatureCollection for the 30 cm water-depth scenario, used to compute the mobility & accessibility hazard index (HMA) via concentric street buffer zones.",
+  "type": "object",
+  "properties": {
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "geometry"],
+        "properties": {
+          "geometry": {
+            "oneOf": [
+              { "$ref": "https://geojson.org/schema/Polygon.json" },
+              { "$ref": "https://geojson.org/schema/MultiPolygon.json" }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

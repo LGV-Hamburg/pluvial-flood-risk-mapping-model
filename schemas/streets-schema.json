@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/streets-schema.json",
+  "title": "Streets",
+  "description": "Constraints for street centre-line features: LineString geometry.",
+  "type": "object",
+  "properties": {
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "geometry"],
+        "properties": {
+          "type": { "type": "string" },
+          "geometry": { "$ref": "https://geojson.org/schema/LineString.json" }
+        }
+      }
+    }
+  }
+}
