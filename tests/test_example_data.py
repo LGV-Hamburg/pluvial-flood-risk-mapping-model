@@ -176,6 +176,18 @@ def hazard_ma_result(
     return run_hazard_ma_pipeline(buildings_gdf, streets_gdf, flood_30_gdf, params)
 
 
+def test_pipeline_params_accepts_target_crs_ogc_uri() -> None:
+    params = PipelineParams(
+        target_crs="http://www.opengis.net/def/crs/EPSG/0/25832"
+    )
+    assert params.target_crs == "http://www.opengis.net/def/crs/EPSG/0/25832"
+
+
+def test_pipeline_params_accepts_target_crs_ogc_urn() -> None:
+    params = PipelineParams(target_crs="urn:ogc:def:crs:EPSG::25832")
+    assert params.target_crs == "urn:ogc:def:crs:EPSG::25832"
+
+
 # ---------------------------------------------------------------------------
 # 1. Vulnerability pipeline tests
 # ---------------------------------------------------------------------------
