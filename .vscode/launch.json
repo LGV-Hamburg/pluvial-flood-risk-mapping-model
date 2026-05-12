@@ -56,8 +56,8 @@
                 "fastprocesses.worker.celery_app",
                 "worker",
                 "--loglevel=debug",
-                "--pool",
-                "solo"
+                "--pool", "threads",
+                "--concurrency", "4"
             ],
             "jinja": true,
             "envFile": "${workspaceFolder}/.env",
