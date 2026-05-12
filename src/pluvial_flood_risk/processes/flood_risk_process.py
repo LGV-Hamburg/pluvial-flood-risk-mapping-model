@@ -17,6 +17,8 @@ Execution pattern (BaseScatterProcess / operation fan-out):
 Each branch receives the full exec_body and runs on its own Celery worker.
 """
 
+from typing import cast
+
 import geopandas as gpd
 import pandas as pd
 from fastprocesses.core.base_process import BaseScatterProcess, parallel_step
@@ -533,13 +535,16 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             return gdf.to_crs(target_crs)
         if gdf.crs is not None and gdf.crs.is_projected:
             return gdf  # already metric — no reprojection needed
+        
         # Geographic CRS (e.g. EPSG:4326) → estimate UTM zone
         reference = gdf if not gdf.empty else (fallback_gdf or gdf)
         utm = reference.estimate_utm_crs()
         return gdf.to_crs(utm)
 
     @staticmethod
-    def _convert_geojson_to_gdf(features: list, source_crs: str | None = None) -> gpd.GeoDataFrame:
+    def _convert_geojson_to_gdf(
+        features: list, source_crs: str | None = None
+    ) -> gpd.GeoDataFrame:
         """Parse a GeoJSON features list into a GeoDataFrame.
 
         Parameters
@@ -651,7 +656,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "'statistical_units' FeatureCollection input so the "
                     "values can be joined automatically."
                 )
-            stat_gdf = self._convert_geojson_to_gdf(stat_units_fc["features"], params.target_crs)
+            stat_gdf = self._convert_geojson_to_gdf(
+                stat_units_fc["features"], params.target_crs
+            )
             gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
 
         # Recover the building id used as dict key (keep it in index).
@@ -688,13 +695,19 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         flood_layers_fc: dict = inputs["flood_layers"]
         params = PipelineParams.model_validate(inputs.get("params", {}))
 
-        buildings_gdf = self._convert_geojson_to_gdf(buildings_fc["features"], params.target_crs)
+        buildings_gdf = self._convert_geojson_to_gdf(
+            buildings_fc["features"], params.target_crs
+        )
         buildings_metric = self._project_crs_to_metric(buildings_gdf, params.target_crs)
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
-        flood_gdf = self._convert_geojson_to_gdf(flood_layers_fc["features"], params.target_crs)
-        flood_metric = self._project_crs_to_metric(flood_gdf, params.target_crs, buildings_gdf)
+        flood_gdf = self._convert_geojson_to_gdf(
+            flood_layers_fc["features"], params.target_crs
+        )
+        flood_metric = self._project_crs_to_metric(
+            flood_gdf, params.target_crs, buildings_gdf
+        )
 
         result_df = run_hazard_wb_pipeline(
             buildings_metric, flood_metric, params.hazard
@@ -724,13 +737,19 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         flood_layers_fc: dict = inputs["flood_layers"]
         params = PipelineParams.model_validate(inputs.get("params", {}))
 
-        buildings_gdf = self._convert_geojson_to_gdf(buildings_fc["features"], params.target_crs)
+        buildings_gdf = self._convert_geojson_to_gdf(
+            buildings_fc["features"], params.target_crs
+        )
         buildings_metric = self._project_crs_to_metric(buildings_gdf, params.target_crs)
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
-        streets_gdf = self._convert_geojson_to_gdf(streets_fc["features"], params.target_crs)
-        streets_metric = self._project_crs_to_metric(streets_gdf, params.target_crs, buildings_gdf)
+        streets_gdf = self._convert_geojson_to_gdf(
+            streets_fc["features"], params.target_crs
+        )
+        streets_metric = self._project_crs_to_metric(
+            streets_gdf, params.target_crs, buildings_gdf
+        )
 
         # Filter flood features to the configured MA depth class.
         ma_level = params.hazard.ma_flood_level_cm
@@ -751,7 +770,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 f"'flood_layers'. Available levels: {available}"
             )
         flood_gdf = self._convert_geojson_to_gdf(ma_features, params.target_crs)
-        flood_metric = self._project_crs_to_metric(flood_gdf, params.target_crs, buildings_gdf)
+        flood_metric = self._project_crs_to_metric(
+            flood_gdf, params.target_crs, buildings_gdf
+        )
 
         result_df = run_hazard_ma_pipeline(
             buildings_metric, streets_metric, flood_metric, params.hazard
@@ -873,19 +894,26 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             "type": "FeatureCollection",
             "features": enriched_features,
         }
+
         return RiskResult(
             risk_features=risk_features,
             classification_breaks_wb=[
-                self._serialize_output_value(
-                    value,
-                    params.output.decimal_precision,
+                cast(
+                    float,
+                    self._serialize_output_value(
+                        value,
+                        params.output.decimal_precision,
+                    ),
                 )
                 for value in classified.breaks_well_being
             ],
             classification_breaks_ma=[
-                self._serialize_output_value(
-                    value,
-                    params.output.decimal_precision,
+                cast(
+                    float,
+                    self._serialize_output_value(
+                        value,
+                        params.output.decimal_precision,
+                    ),
                 )
                 for value in classified.breaks_mobility_accessibility
             ],
