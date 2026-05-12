@@ -554,7 +554,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         """
         gdf = gpd.GeoDataFrame.from_features(features)
         if gdf.crs is None:
-            gdf = gdf.set_crs("EPSG:4326")
+            gdf = gdf.set_crs(source_crs or "EPSG:4326")
         return gdf
 
     @staticmethod
@@ -688,8 +688,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         flood_layers_fc: dict = inputs["flood_layers"]
         params = PipelineParams.model_validate(inputs.get("params", {}))
 
-        buildings_gdf = self._parse_fc(buildings_fc["features"])
-        buildings_metric = self._to_metric(buildings_gdf, params.target_crs)
+        buildings_gdf = self._convert_geojson_to_gdf(buildings_fc["features"], params.target_crs)
+        buildings_metric = self._project_crs_to_metric(buildings_gdf, params.target_crs)
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
@@ -724,13 +724,13 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         flood_layers_fc: dict = inputs["flood_layers"]
         params = PipelineParams.model_validate(inputs.get("params", {}))
 
-        buildings_gdf = self._parse_fc(buildings_fc["features"])
-        buildings_metric = self._to_metric(buildings_gdf, params.target_crs)
+        buildings_gdf = self._convert_geojson_to_gdf(buildings_fc["features"], params.target_crs)
+        buildings_metric = self._project_crs_to_metric(buildings_gdf, params.target_crs)
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
-        streets_gdf = self._parse_fc(streets_fc["features"])
-        streets_metric = self._to_metric(streets_gdf, params.target_crs, buildings_gdf)
+        streets_gdf = self._convert_geojson_to_gdf(streets_fc["features"], params.target_crs)
+        streets_metric = self._project_crs_to_metric(streets_gdf, params.target_crs, buildings_gdf)
 
         # Filter flood features to the configured MA depth class.
         ma_level = params.hazard.ma_flood_level_cm
