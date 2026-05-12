@@ -1,5 +1,5 @@
 # IDE stuff
-.vscode/
+.vscode/settings.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
