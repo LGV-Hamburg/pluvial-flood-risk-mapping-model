@@ -12,11 +12,11 @@ GIT_COMMIT := $(shell git rev-parse --short HEAD)
 all: lock build-image run-local
 
 lock:
-	@echo 'Creating poetry lockfile'
+	@echo 'Creating/Updating poetry lockfile'
 	poetry lock
 
 
-build-image:
+build-image: lock
 	@echo 'Building release ${CONTAINER_REGISTRY}/$(IMAGE_NAME):$(IMAGE_TAG)'
 	docker compose -f docker-compose-build.yaml build --build-arg SOURCE_COMMIT=$(GIT_COMMIT) app
 
