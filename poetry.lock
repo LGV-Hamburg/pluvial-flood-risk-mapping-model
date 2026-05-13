@@ -913,8 +913,8 @@ optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "fastprocesses-0.18.2-py3-none-any.whl", hash = "sha256:d0a4b5b9de97fa25ee5bd399680b63dbd34ba5d6c9310a4b3cedbb68240fe268"},
-    {file = "fastprocesses-0.18.2.tar.gz", hash = "sha256:c22429de868a10b280c5f46fa23684c69bbc1286b1af4eb6d96a74d16d421cea"},
+    {file = "fastprocesses-0.18.3-py3-none-any.whl", hash = "sha256:ee0439d7e262274bfaf20e479a8f9fe5b0c02955a2a81a7515a5fea8bce82eef"},
+    {file = "fastprocesses-0.18.3.tar.gz", hash = "sha256:8548c0140b74a6e56ef77b8647f69b6b987c0a26e2bad1ba1bbb12d42fffa938"},
 ]
 
 [package.dependencies]
@@ -4354,4 +4354,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "b95ca45a2578a674693298b901a7e01bce50a9fa5b4c1bb89bfecf0370edc9ab"
+content-hash = "ceaeaeebfb70c4ef6b48bdbf8b089e943f8cff11e63b835fcf17505457fa22df"
