@@ -88,6 +88,15 @@
   - [NumPy-Muster auf einen Blick](#numpy-muster-auf-einen-blick)
 
 <!-- /code_chunk_output -->
+# Open ToDos (unstructured)
+
+* Einstellbarkeit:
+  - unterste Tiefenklasse soll einstellbar sein: Well-being soll anders einstellbar sein als mobility
+* Flood susceptibility transformation: 
+	- Addition von 0,25 des Mittelwerts (Soll ausschaltbar sein)
+	- danach wird quadriert, um die Schiefe der Verteilung zu minimieren (damit die SV ungefähr den gleichen Einfluss hat)
+	- wenn beides ausgeschaltet wird, dann ist dieser Schritt "ausgeschaltet"
+* Single parents
 
 # Methoden-Überblick (Vogelbacher et al., 2025)
 
