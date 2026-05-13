@@ -17,6 +17,8 @@ Execution pattern (BaseScatterProcess / operation fan-out):
 Each branch receives the full exec_body and runs on its own Celery worker.
 """
 
+import json
+from pathlib import Path
 from typing import cast
 
 import geopandas as gpd
@@ -32,6 +34,7 @@ from fastprocesses.core.models import (
 )
 from fastprocesses.processes.process_registry import register_process
 from pydantic import BaseModel
+from referencing import Registry, Resource
 
 from ..algorithms.classification import run_classification_pipeline
 from ..algorithms.exposure import run_exposure_pipeline
@@ -98,6 +101,14 @@ class RiskResult(BaseModel):
     ]  # for pluvial_flood_risk_mobility_accessibility
 
 
+#---------------------------------------------------------------------------
+# Helpers
+#---------------------------------------------------------------------------
+
+def load_schema_file(path: str) -> Resource:
+    schema = json.loads(Path(path).read_text())
+    return Resource.from_contents(schema)
+
 # ---------------------------------------------------------------------------
 # Process
 # ---------------------------------------------------------------------------
@@ -121,6 +132,28 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     hazard_ma_pipeline      — Steps 3.1-3.2
         Concentric street buffers (5 / 15 / 30 m) x flood layer → log-normal CDF → HMA
     """
+    schema_registry = Registry().with_resources([
+        (
+            "https://geojson.org/schema/FeatureCollection.json",
+            load_schema_file("schemas/geojson-featurecollection.json")
+        ),
+        (
+            "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/buildings-schema.json",
+            load_schema_file("schemas/buildings-schema.json")
+        ),
+        (
+            "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/streets-schema.json",  
+            load_schema_file("schemas/streets-schema.json")
+        ),
+        (
+            "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/statistical-units-schema.json",
+            load_schema_file("schemas/statistical-units-schema.json")
+        ),
+        (
+            "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layers-schema.json",
+            load_schema_file("schemas/flood-layers-schema.json")
+        ),
+    ])
 
     process_description = ProcessDescription(
         id="pluvial_flood_risk",
@@ -143,8 +176,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 description=(
                     "GeoJSON FeatureCollection of building footprints. "
                     "Each feature must carry all socio-economic indicator properties. "
-                    "The population fields 'residents_in_statistical_unit' and "
-                    "'living_area_m2_statistical_unit' may be pre-joined onto each "
+                    "The population field 'residents_in_statistical_unit' may be "
+                    "pre-joined onto each "
                     "building feature, or derived automatically from a separate "
                     "'statistical_units' input (joined by attribute via "
                     "'statistical_unit_id', or spatially via building centroid "
@@ -185,11 +218,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 title="Statistical Units Feature Collection (optional)",
                 description=(
                     "GeoJSON FeatureCollection of statistical unit polygons carrying "
-                    "census attributes. Required only when 'residents_in_statistical_unit' "
-                    "and 'living_area_m2_statistical_unit' are NOT pre-joined onto the "
-                    "building features. Each feature must have properties: "
-                    "'residents' (total registered residents) and "
-                    "'living_area_m2' (total residential floor area [m²]). "
+                    "census attributes. Required only when "
+                    "'residents_in_statistical_unit' is not pre-joined onto the "
+                    "building features. Each feature must have property: "
+                    "'residents' (total registered residents). "
+                    "The statistical-unit living area is derived from building "
+                    "geometry + floors + building_type during the exposure step. "
                     "Join strategy (chosen automatically): "
                     "(1) Attribute join — when building features carry a "
                     "'statistical_unit_id' property that matches the "
@@ -640,26 +674,38 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         gdf_metric = self._project_crs_to_metric(gdf, params.target_crs)
         gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
 
-        # Join residents / living_area from statistical_units when not pre-joined.
-        needs_join = (
-            RESIDENTS_IN_STATISTICAL_UNIT not in gdf_metric.columns
-            or LIVING_AREA_M2_STATISTICAL_UNIT not in gdf_metric.columns
-        )
+        residents_missing = RESIDENTS_IN_STATISTICAL_UNIT not in gdf_metric.columns
+        living_area_missing = LIVING_AREA_M2_STATISTICAL_UNIT not in gdf_metric.columns
+        unit_id_missing = STATISTICAL_UNIT_ID not in gdf_metric.columns
+
+        # Join statistical unit attributes when residents are missing, or when
+        # living area must be derived but no unit assignment is available.
+        needs_join = residents_missing or (living_area_missing and unit_id_missing)
         if needs_join:
             stat_units_fc = inputs.get("statistical_units")
             if stat_units_fc is None:
                 raise ValueError(
                     "The buildings FeatureCollection is missing "
-                    "'residents_in_statistical_unit' and/or "
-                    "'living_area_m2_statistical_unit'. "
-                    "Provide these as building properties, or supply a "
-                    "'statistical_units' FeatureCollection input so the "
-                    "values can be joined automatically."
+                    "'residents_in_statistical_unit', or cannot derive "
+                    "'living_area_m2_statistical_unit' because "
+                    "'statistical_unit_id' is absent. Provide residents and "
+                    "statistical_unit_id as building properties, or supply a "
+                    "'statistical_units' FeatureCollection input for automatic "
+                    "joining."
                 )
             stat_gdf = self._convert_geojson_to_gdf(
                 stat_units_fc["features"], params.target_crs
             )
             gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
+
+        if living_area_missing and STATISTICAL_UNIT_ID in gdf_metric.columns:
+            building_living_area = (
+                (gdf_metric[FLOORS_ABOVE_GROUND] - (gdf_metric[BUILDING_TYPE] - 1))
+                * gdf_metric[BUILDING_FOOTPRINT_AREA_M2]
+            )
+            gdf_metric[LIVING_AREA_M2_STATISTICAL_UNIT] = building_living_area.groupby(
+                gdf_metric[STATISTICAL_UNIT_ID]
+            ).transform("sum")
 
         # Recover the building id used as dict key (keep it in index).
         if "id" in gdf_metric.columns:
