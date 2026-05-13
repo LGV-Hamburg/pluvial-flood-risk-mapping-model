@@ -25,6 +25,11 @@ search = "version = \"{current_version}\""
 replace = "version = \"{new_version}\""
 
 [[tool.bumpversion.files]]
-filename = ".env.example"
+filename = ".env"
 search = "IMAGE_TAG={current_version}"
 replace = "IMAGE_TAG={new_version}"
+
+[[tool.bumpversion.files]]
+filename = "Dockerfile"
+search = "org.opencontainers.image.version={current_version}"
+replace = "org.opencontainers.image.version={new_version}"
