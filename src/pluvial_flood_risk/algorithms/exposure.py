@@ -16,10 +16,13 @@ area as ``building_footprint_area_m2``.  When the input arrives as a GeoJSON
 FeatureCollection the process layer derives this column from the polygon
 geometry (``gdf.geometry.area``) before invoking this module.
 
-The statistical-unit lookup (residents, living area) is assumed to be
-pre-joined onto each building row — matching how the OGC process input
-FeatureCollection embeds ``residents_in_statistical_unit`` and
-``living_area_m2_statistical_unit`` as building properties.
+The process layer ensures two statistical-unit columns are available before
+this module runs:
+
+* ``residents_in_statistical_unit`` — provided directly or joined from the
+    statistical-units dataset
+* ``living_area_m2_statistical_unit`` — derived from building geometry,
+    floors, and building type within each statistical unit
 
 Formulas (original ArcPy field expressions)
 --------------------------------------------
