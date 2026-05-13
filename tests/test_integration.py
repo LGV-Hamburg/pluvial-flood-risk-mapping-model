@@ -159,7 +159,6 @@ def exec_body() -> dict:
                 # Statistical-unit population lookup
                 "statistical_unit_id": 100,
                 "residents_in_statistical_unit": 500.0,
-                "living_area_m2_statistical_unit": 18_000.0,
             },
         }
 
@@ -655,7 +654,6 @@ def exec_body_with_stat_units() -> dict:
                         "properties": {
                             "statistical_unit_id": 100,
                             "residents": 500.0,
-                            "living_area_m2": 18_000.0,
                         },
                     }
                 ],
@@ -727,8 +725,7 @@ class TestExposurePipelineStatisticalUnitsJoin:
                                 "floors_above_ground": 2,
                                 "building_type": 1,
                                 "statistical_unit_id": 100,
-                                # residents_in_statistical_unit and
-                                # living_area_m2_statistical_unit intentionally absent
+                                # residents_in_statistical_unit intentionally absent
                             },
                         }
                     ],
@@ -802,7 +799,6 @@ def exec_body_spatial_join() -> dict:
                         "geometry": unit_poly,
                         "properties": {
                             "residents": 500.0,
-                            "living_area_m2": 18_000.0,
                         },
                     }
                 ],
