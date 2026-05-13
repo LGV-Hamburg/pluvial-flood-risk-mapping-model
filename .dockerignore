@@ -9,3 +9,4 @@
 !pyproject.toml
 !src
 !app.py
+!schemas/
