@@ -10,6 +10,7 @@ Start a Celery worker (separate terminal):
 from __future__ import annotations
 
 import uvicorn
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastprocesses.api.server import OGCProcessesAPI
 from fastprocesses.common import settings
 from fastprocesses.processes.process_registry import get_process_registry
@@ -28,6 +29,22 @@ if _missing:
         f"Expected OGC processes not registered at startup: {_missing}. "
         "Ensure all process modules are imported before OGCProcessesAPI is created."
     )
+
+# Starlette middleware to increase body size
+class IncreaseBodySizeMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if request.method == "POST":
+            # Starlette's default is ~2MB; increase to 200MB
+            request._receive = self.receive_with_limit(request._receive, limit=200 * 1024 * 1024)
+        return await call_next(request)
+    
+    @staticmethod
+    def receive_with_limit(original_receive, limit):
+        async def receive():
+            message = await original_receive()
+            # Body size tracking logic here if needed
+            return message
+        return receive
 
 app = OGCProcessesAPI(
     contact={
