@@ -96,7 +96,9 @@
 	- Addition von 0,25 des Mittelwerts (Soll ausschaltbar sein)
 	- danach wird quadriert, um die Schiefe der Verteilung zu minimieren (damit die SV ungefähr den gleichen Einfluss hat)
 	- wenn beides ausgeschaltet wird, dann ist dieser Schritt "ausgeschaltet"
-* Single parents
+* include Single parents into calculations
+* UMP: worker receives SIGKILL when sending big data (> 30MB) -> cause?
+* flood risk fails with: ""Input 'statistical_units' validation failed: 'statistical_unit_id' is a required property." -> statistical_unit vs statistical_unit_id
 
 # Methoden-Überblick (Vogelbacher et al., 2025)
 
