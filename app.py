@@ -10,6 +10,8 @@ Start a Celery worker (separate terminal):
 from __future__ import annotations
 
 import os
+import time
+from typing import Callable
 
 import uvicorn
 from fastprocesses.api.server import OGCProcessesAPI
@@ -43,6 +45,45 @@ class RequestBodyTooLargeError(Exception):
     """Raised when an incoming request exceeds configured body size limit."""
 
 
+class IngressLoggingMiddleware(BaseHTTPMiddleware):
+    """Log basic ingress request/response information for troubleshooting."""
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Response],
+    ) -> Response:
+        started = time.perf_counter()
+        content_length = request.headers.get("content-length", "-")
+        settings.fp_logger.info(
+            "Ingress start method=%s path=%s content_length=%s",
+            request.method,
+            request.url.path,
+            content_length,
+        )
+        try:
+            response = await call_next(request)
+        except Exception:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            settings.fp_logger.exception(
+                "Ingress error method=%s path=%s duration_ms=%.2f",
+                request.method,
+                request.url.path,
+                elapsed_ms,
+            )
+            raise
+
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        settings.fp_logger.info(
+            "Ingress end method=%s path=%s status=%s duration_ms=%.2f",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+        return response
+
+
 # Starlette middleware to enforce request body size.
 class IncreaseBodySizeMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, limit: int) -> None:
@@ -53,6 +94,14 @@ class IncreaseBodySizeMiddleware(BaseHTTPMiddleware):
         if request.method in {"POST", "PUT", "PATCH"}:
             content_length = request.headers.get("content-length")
             if content_length and int(content_length) > self.limit:
+                settings.fp_logger.warning(
+                    "Ingress reject method=%s path=%s reason=content_length_over_limit "
+                    "content_length=%s limit=%s",
+                    request.method,
+                    request.url.path,
+                    content_length,
+                    self.limit,
+                )
                 return JSONResponse(
                     status_code=413,
                     content={
@@ -71,6 +120,12 @@ class IncreaseBodySizeMiddleware(BaseHTTPMiddleware):
         try:
             return await call_next(request)
         except RequestBodyTooLargeError:
+            settings.fp_logger.warning(
+                "Ingress reject method=%s path=%s reason=stream_over_limit limit=%s",
+                request.method,
+                request.url.path,
+                self.limit,
+            )
             return JSONResponse(
                 status_code=413,
                 content={
@@ -112,6 +167,8 @@ app = OGCProcessesAPI(
     terms_of_service="",
 ).get_app()
 
+# Order matters: ingress logging should wrap request-size enforcement.
+app.add_middleware(IngressLoggingMiddleware)
 app.add_middleware(IncreaseBodySizeMiddleware, limit=_MAX_REQUEST_BODY_BYTES)
 
 if __name__ == "__main__":
