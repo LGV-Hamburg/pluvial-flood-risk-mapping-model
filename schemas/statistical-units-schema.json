@@ -13,13 +13,13 @@
         "properties": {
           "properties": {
             "type": "object",
-            "required": ["statistical_unit_id", "residents", "living_area_m2"],
+            "required": ["statistical_unit_id", "residents_in_statistical_unit", "living_area_m2"],
             "properties": {
               "statistical_unit_id": {
                 "type": ["integer", "string"],
                 "description": "Unique key matching building.statistical_unit_id"
               },
-              "residents": {
+              "residents_in_statistical_unit": {
                 "type": "number",
                 "minimum": 0,
                 "description": "Total residents registered in this statistical unit"
