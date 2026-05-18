@@ -8,9 +8,11 @@ Start a Celery worker (separate terminal):
 """
 
 
+import asyncio
 import logging
 import os
 import time
+import uuid
 
 import uvicorn
 from fastprocesses.api.server import OGCProcessesAPI
@@ -58,19 +60,35 @@ class IngressLoggingMiddleware(BaseHTTPMiddleware):
         call_next: RequestResponseEndpoint
     ) -> Response:
         started = time.perf_counter()
+        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
         content_length = request.headers.get("content-length", "-")
+        client = request.client.host if request.client else "-"
         logger.info(
-            "Ingress start method=%s path=%s content_length=%s",
+            "Ingress start request_id=%s method=%s path=%s client=%s "
+            "content_length=%s",
+            request_id,
             request.method,
             request.url.path,
+            client,
             content_length,
         )
         try:
             response = await call_next(request)
+        except asyncio.CancelledError:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            logger.warning(
+                "Ingress cancelled request_id=%s method=%s path=%s duration_ms=%.2f",
+                request_id,
+                request.method,
+                request.url.path,
+                elapsed_ms,
+            )
+            raise
         except Exception:
             elapsed_ms = (time.perf_counter() - started) * 1000
             logger.exception(
-                "Ingress error method=%s path=%s duration_ms=%.2f",
+                "Ingress error request_id=%s method=%s path=%s duration_ms=%.2f",
+                request_id,
                 request.method,
                 request.url.path,
                 elapsed_ms,
@@ -79,7 +97,8 @@ class IngressLoggingMiddleware(BaseHTTPMiddleware):
 
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
-            "Ingress end method=%s path=%s status=%s duration_ms=%.2f",
+            "Ingress end request_id=%s method=%s path=%s status=%s duration_ms=%.2f",
+            request_id,
             request.method,
             request.url.path,
             response.status_code,
@@ -102,12 +121,14 @@ class IncreaseBodySizeMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: RequestResponseEndpoint
     ) -> Response:
+        request_id = request.headers.get("x-request-id") or "-"
         if request.method in {"POST", "PUT", "PATCH"}:
             content_length = request.headers.get("content-length")
             if content_length and int(content_length) > self.limit:
                 logger.warning(
-                    "Ingress reject method=%s path=%s reason=content_length_over_limit "
-                    "content_length=%s limit=%s",
+                    "Ingress reject request_id=%s method=%s path=%s "
+                    "reason=content_length_over_limit content_length=%s limit=%s",
+                    request_id,
                     request.method,
                     request.url.path,
                     content_length,
@@ -130,9 +151,20 @@ class IncreaseBodySizeMiddleware(BaseHTTPMiddleware):
 
         try:
             return await call_next(request)
+        except asyncio.CancelledError:
+            logger.warning(
+                "Ingress cancelled in body-size middleware request_id=%s method=%s "
+                "path=%s",
+                request_id,
+                request.method,
+                request.url.path,
+            )
+            raise
         except RequestBodyTooLargeError:
             logger.warning(
-                "Ingress reject method=%s path=%s reason=stream_over_limit limit=%s",
+                "Ingress reject request_id=%s method=%s path=%s "
+                "reason=stream_over_limit limit=%s",
+                request_id,
                 request.method,
                 request.url.path,
                 self.limit,
