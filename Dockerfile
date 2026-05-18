@@ -32,7 +32,7 @@ ARG SOURCE_COMMIT
 LABEL maintainer="Stefan Schuhart" \
       name="analytics/pluvial-flood-risk" \
       source_commit=$SOURCE_COMMIT \
-      org.opencontainers.image.version=0.1.3
+      org.opencontainers.image.version=0.1.4
 
 # add user and group
 RUN groupadd --gid $USER_GID $USERNAME && \
