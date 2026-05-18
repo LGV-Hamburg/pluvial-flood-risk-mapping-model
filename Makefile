@@ -20,7 +20,7 @@ build-image: lock
 	@echo 'Building release ${CONTAINER_REGISTRY}/$(IMAGE_NAME):$(IMAGE_TAG)'
 	docker compose -f docker-compose-build.yaml build --build-arg SOURCE_COMMIT=$(GIT_COMMIT) app
 
-push-registry:
+upload-image: build-image
 	az acr login --name $(shell echo $(CONTAINER_REGISTRY) | cut -d. -f1)
 	docker push ${CONTAINER_REGISTRY}/$(IMAGE_NAME):$(IMAGE_TAG)
 
