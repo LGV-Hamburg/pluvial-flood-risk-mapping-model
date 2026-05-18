@@ -7,17 +7,15 @@ Start a Celery worker (separate terminal):
     celery -A fastprocesses.worker.celery_app worker --loglevel=info
 """
 
-from __future__ import annotations
 
+import logging
 import os
 import time
-from typing import Callable
 
 import uvicorn
 from fastprocesses.api.server import OGCProcessesAPI
-from fastprocesses.common import settings
 from fastprocesses.processes.process_registry import get_process_registry
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -31,8 +29,13 @@ _REQUIRED_PROCESSES = {"pluvial_flood_risk"}
 _registered = set(get_process_registry().get_process_ids())
 _missing = _REQUIRED_PROCESSES - _registered
 
+
 # Max request body size accepted by this app (default: 200 MiB).
 _MAX_REQUEST_BODY_BYTES = int(os.getenv("PFR_MAX_REQUEST_BODY_BYTES", "209715200"))
+
+# Module-level logger for the app
+logger = logging.getLogger("pluvial_flood_risk")
+
 
 if _missing:
     raise RuntimeError(
@@ -45,17 +48,18 @@ class RequestBodyTooLargeError(Exception):
     """Raised when an incoming request exceeds configured body size limit."""
 
 
+
 class IngressLoggingMiddleware(BaseHTTPMiddleware):
     """Log basic ingress request/response information for troubleshooting."""
 
     async def dispatch(
         self,
         request: Request,
-        call_next: Callable[[Request], Response],
+        call_next: RequestResponseEndpoint
     ) -> Response:
         started = time.perf_counter()
         content_length = request.headers.get("content-length", "-")
-        settings.fp_logger.info(
+        logger.info(
             "Ingress start method=%s path=%s content_length=%s",
             request.method,
             request.url.path,
@@ -65,7 +69,7 @@ class IngressLoggingMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
         except Exception:
             elapsed_ms = (time.perf_counter() - started) * 1000
-            settings.fp_logger.exception(
+            logger.exception(
                 "Ingress error method=%s path=%s duration_ms=%.2f",
                 request.method,
                 request.url.path,
@@ -74,7 +78,7 @@ class IngressLoggingMiddleware(BaseHTTPMiddleware):
             raise
 
         elapsed_ms = (time.perf_counter() - started) * 1000
-        settings.fp_logger.info(
+        logger.info(
             "Ingress end method=%s path=%s status=%s duration_ms=%.2f",
             request.method,
             request.url.path,
@@ -85,16 +89,23 @@ class IngressLoggingMiddleware(BaseHTTPMiddleware):
 
 
 # Starlette middleware to enforce request body size.
+
+
+
 class IncreaseBodySizeMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, limit: int) -> None:
         super().__init__(app)
         self.limit = limit
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: RequestResponseEndpoint
+    ) -> Response:
         if request.method in {"POST", "PUT", "PATCH"}:
             content_length = request.headers.get("content-length")
             if content_length and int(content_length) > self.limit:
-                settings.fp_logger.warning(
+                logger.warning(
                     "Ingress reject method=%s path=%s reason=content_length_over_limit "
                     "content_length=%s limit=%s",
                     request.method,
@@ -120,7 +131,7 @@ class IncreaseBodySizeMiddleware(BaseHTTPMiddleware):
         try:
             return await call_next(request)
         except RequestBodyTooLargeError:
-            settings.fp_logger.warning(
+            logger.warning(
                 "Ingress reject method=%s path=%s reason=stream_over_limit limit=%s",
                 request.method,
                 request.url.path,
@@ -150,6 +161,7 @@ class IncreaseBodySizeMiddleware(BaseHTTPMiddleware):
 
         return receive
 
+
 app = OGCProcessesAPI(
     contact={
         "name": "Agency for Geoinformation and Surveying Hamburg",
@@ -171,11 +183,17 @@ app = OGCProcessesAPI(
 app.add_middleware(IngressLoggingMiddleware)
 app.add_middleware(IncreaseBodySizeMiddleware, limit=_MAX_REQUEST_BODY_BYTES)
 
+# Configure logging at startup if not already configured by Uvicorn/Gunicorn
+@app.on_event("startup")
+async def configure_logging():
+    if not logging.getLogger().hasHandlers():
+        logging.basicConfig(level=logging.INFO)
+
 if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=8000,
         log_config=None,
-        log_level=settings.FP_LOG_LEVEL,
+        log_level="info",
     )
