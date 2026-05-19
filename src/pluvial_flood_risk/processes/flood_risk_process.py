@@ -138,6 +138,14 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             load_schema_file("schemas/geojson-featurecollection.json")
         ),
         (
+            "https://geojson.org/schema/Polygon.json",
+            load_schema_file("schemas/geojson-Polygon.json")
+        ),
+        (
+            "https://geojson.org/schema/LineString.json",
+            load_schema_file("schemas/geojson-LineString.json")
+        ),
+        (
             "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/buildings-schema.json",
             load_schema_file("schemas/buildings-schema.json")
         ),
@@ -184,12 +192,46 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "when that field is absent)."
                 ),
                 schema=Schema(
-                    allOf=[
-                        {"format": "geojson-feature-collection"},
-                        {"$ref": "https://geojson.org/schema/FeatureCollection.json"},
-                        {
-                            "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/buildings-schema.json"
-                        },
+                    oneOf=[
+                        Schema(
+                            allOf=[
+                                Schema(format="geojson-feature-collection"),
+                                Schema(ref="https://geojson.org/schema/FeatureCollection.json"),
+                                Schema(ref="https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/buildings-schema.json")
+                            ],
+                        ),
+                        Schema(
+                            type="object",
+                            required=["href", "type"],
+                            properties={
+                                "href": Schema(
+                                    type="string",
+                                    format="uri",
+                                    description=(
+                                        "URI of a remote resource returning a GeoJSON "
+                                        "FeatureCollection, e.g. an OGC API Features items endpoint."
+                                    ),
+                                ),
+                                "type": Schema(
+                                    type="string",
+                                    enum=[
+                                        "application/geo+json",
+                                        "application/json",
+                                    ],
+                                    description="Media type of the remote resource.",
+                                ),
+                                "schema": Schema(
+                                    type="string",
+                                    format="uri",
+                                    const=(
+                                        "https://gitlab.opencode.de/lgvhh/udp/"
+                                        "urban-pluvial-flood-risk-mapping/-/raw/main/"
+                                        "schemas/buildings-schema.json"
+                                    ),
+                                )
+                            },
+                            additionalProperties=False,
+                        )
                     ]
                 ),
                 minOccurs=1,
@@ -204,11 +246,15 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 ),
                 schema=Schema(
                     allOf=[
-                        {"format": "geojson-feature-collection"},
-                        {"$ref": "https://geojson.org/schema/FeatureCollection.json"},
-                        {
-                            "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/streets-schema.json"
-                        },
+                        Schema(
+                            format="geojson-feature-collection",
+                            ref="https://geojson.org/schema/FeatureCollection.json",
+                            allOf=[
+                                {
+                                    "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/streets-schema.json"
+                                }
+                            ],
+                        )
                     ]
                 ),
                 minOccurs=1,
@@ -236,11 +282,15 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 ),
                 schema=Schema(
                     allOf=[
-                        {"format": "geojson-feature-collection"},
-                        {"$ref": "https://geojson.org/schema/FeatureCollection.json"},
-                        {
-                            "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/statistical-units-schema.json"
-                        },
+                        Schema(
+                            format="geojson-feature-collection"
+                        ),
+                        Schema(
+                            ref="https://geojson.org/schema/FeatureCollection.json",
+                        ),
+                        Schema(
+                            ref="https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/statistical-units-schema.json"
+                        )
                     ]
                 ),
                 minOccurs=0,
@@ -261,11 +311,15 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 ),
                 schema=Schema(
                     allOf=[
-                        {"format": "geojson-feature-collection"},
-                        {"$ref": "https://geojson.org/schema/FeatureCollection.json"},
-                        {
-                            "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layers-schema.json"
-                        },
+                        Schema(
+                            format="geojson-feature-collection"
+                        ),
+                        Schema(
+                            ref="https://geojson.org/schema/FeatureCollection.json"
+                        ),
+                        Schema(
+                            ref="https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layers-schema.json"
+                        )
                     ]
                 ),
                 minOccurs=1,
@@ -504,8 +558,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 ),
                 schema=Schema(
                     allOf=[
-                        {"format": "geojson-feature-collection"},
-                        {"$ref": "https://geojson.org/schema/FeatureCollection.json"},
+                        Schema.model_validate({"format": "geojson-feature-collection"}),
+                        Schema.model_validate({"$ref": "https://geojson.org/schema/FeatureCollection.json"}),
                     ]
                 ),
             ),
@@ -515,7 +569,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "Head/tail break thresholds for pluvial_flood_risk_well_being. "
                     "Use as class boundaries for cartographic visualisation."
                 ),
-                schema=Schema(type="array", items={"type": "number"}),
+                schema=Schema(type="array", items=Schema.model_validate({"type": "number"})),
             ),
             "classification_breaks_ma": ProcessOutput(
                 title="Classification Breaks — Mobility & Accessibility",
@@ -523,7 +577,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "Head/tail break thresholds for "
                     "pluvial_flood_risk_mobility_accessibility."
                 ),
-                schema=Schema(type="array", items={"type": "number"}),
+                schema=Schema(type="array", items=Schema.model_validate({"type": "number"})),
             ),
         },
         keywords=[
