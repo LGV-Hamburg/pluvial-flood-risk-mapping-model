@@ -13,7 +13,14 @@
         "properties": {
           "properties": {
             "type": "object",
-            "required": ["statistical_unit_id", "residents_in_statistical_unit", "living_area_m2"],
+            "required": [
+              "residents_in_statistical_unit",
+              "single_parents",
+              "no_highschool_diploma",
+              "social_welfare_recipients",
+              "elderly_singles_over_65",
+              "children_under_10"
+            ],
             "properties": {
               "statistical_unit_id": {
                 "type": ["integer", "string"],
@@ -24,10 +31,30 @@
                 "minimum": 0,
                 "description": "Total residents registered in this statistical unit"
               },
-              "living_area_m2": {
+              "single_parents": {
                 "type": "number",
                 "minimum": 0,
-                "description": "Total residential floor area [m\u00b2] of this statistical unit"
+                "description": "Number of single-parent households in this statistical unit"
+              },
+              "no_highschool_diploma": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Number of residents without a high school diploma in this statistical unit"
+              },
+              "social_welfare_recipients": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Number of social welfare recipients in this statistical unit"
+              },
+              "elderly_singles_over_65": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Number of single-person households with residents over 65 in this statistical unit"
+              },
+              "children_under_10": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Number of children under 10 years old in this statistical unit"
               }
             }
           }
