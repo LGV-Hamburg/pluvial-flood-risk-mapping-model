@@ -34,6 +34,10 @@ LABEL maintainer="Stefan Schuhart" \
       source_commit=$SOURCE_COMMIT \
       org.opencontainers.image.version=0.1.7
 
+RUN --mount=type=cache,target=$CACHE_DIR apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates  \
+    && rm -rf /var/lib/apt/lists/*
+
 # add user and group
 RUN groupadd --gid $USER_GID $USERNAME && \
     useradd --create-home --no-log-init --gid $USER_GID --uid $USER_UID --shell /bin/bash $USERNAME && \
