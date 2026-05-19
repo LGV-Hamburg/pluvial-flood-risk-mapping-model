@@ -53,4 +53,6 @@ COPY --chown=$USERNAME:$USER_GID app.py ./
 
 COPY --chown=$USERNAME:$USER_GID schemas /app/schemas
 
+USER $USERNAME
+
 ENV PYTHONUNBUFFERED 1
