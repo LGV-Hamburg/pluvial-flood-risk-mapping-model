@@ -246,15 +246,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 ),
                 schema=Schema(
                     allOf=[
-                        Schema(
-                            format="geojson-feature-collection",
-                            ref="https://geojson.org/schema/FeatureCollection.json",
-                            allOf=[
-                                {
-                                    "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/streets-schema.json"
-                                }
-                            ],
-                        )
+                        Schema(format="geojson-feature-collection"),
+                        Schema(ref="https://geojson.org/schema/FeatureCollection.json"),
+                        Schema(ref="https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/streets-schema.json"   )
                     ]
                 ),
                 minOccurs=1,
