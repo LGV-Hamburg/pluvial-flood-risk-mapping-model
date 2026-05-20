@@ -109,7 +109,7 @@ def compute_mobility_flood_fractions(
        tabulate intersection with flood layer.
 
     3. Zone 3 (outer street ring, 15–(15+ring_width) m from building):
-       Build a ring = Buffer(B15, ring_width) \ B15 → clip to streets →
+       Build a ring = Buffer(B15, ring_width) minus B15 -> clip to streets ->
        tabulate intersection with flood layer.
 
     Parameters
