@@ -142,8 +142,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             load_schema_file("schemas/geojson-Polygon.json")
         ),
         (
-            "https://geojson.org/schema/LineString.json",
-            load_schema_file("schemas/geojson-LineString.json")
+            "https://geojson.org/schema/MultiPolygon.json",
+            load_schema_file("schemas/geojson-MultiPolygon.json")
         ),
         (
             "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/buildings-schema.json",
