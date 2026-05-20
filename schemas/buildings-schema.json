@@ -12,18 +12,18 @@
         "required": ["type", "geometry", "properties"],
         "properties": {
           "type": { "type": "string" },
-          "geometry": { "$ref": "https://geojson.org/schema/Polygon.json" },
+          "geometry": {
+            "oneOf": [
+              { "$ref": "https://geojson.org/schema/Polygon.json" },
+              { "$ref": "https://geojson.org/schema/MultiPolygon.json" }
+            ]
+          },
           "properties": {
             "type": "object",
             "required": [
               "id",
               "floors_above_ground",
-              "building_type",
-              "children_under_10",
-              "elderly_singles_over_65",
-              "social_welfare_recipients",
-              "no_highschool_diploma",
-              "statistical_unit_id"
+              "building_type"
             ],
             "description": "residents_in_statistical_unit and living_area_m2_statistical_unit are optional: if omitted, supply a 'statistical_units' FeatureCollection and the values will be joined automatically.",
             "properties": {
