@@ -24,6 +24,8 @@ RUN touch README.md \
 
 FROM python:3.13-slim-bookworm as runtime
 
+ENV CACHE_DIR=/app/cache
+
 ARG USER_UID=1000
 ARG USERNAME=pythonuser
 ARG USER_GID=2000
