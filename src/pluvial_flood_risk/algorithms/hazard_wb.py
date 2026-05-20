@@ -169,7 +169,7 @@ def compute_wb_flood_fractions(
         geometry=[unary_union(bld.geometry)],
         crs=bld.crs,
     )
-    bu2 = gpd.overlay(bu2, buildings_union, how="difference")
+    bu2 = gpd.overlay(bu2, buildings_union, how="difference", keep_geom_type=False)
 
     # Pre-compute zone area per building (same for all depth classes)
     bu2["zone_area_m2"] = bu2.geometry.area
@@ -203,6 +203,7 @@ def compute_wb_flood_fractions(
             bu2[[building_id_col, "geometry"]],
             flood_union,
             how="intersection",
+            keep_geom_type=False,
         )
 
         frac_col = flooded_fraction_col(depth_cm)

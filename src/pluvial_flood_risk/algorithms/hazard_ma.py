@@ -205,7 +205,7 @@ def compute_mobility_flood_fractions(
         zone_area = zone_gdf.groupby(building_id_col)["zone_area_m2"].sum()
 
         # Intersect zone polygons with the flood layer
-        flooded = gpd.overlay(zone_gdf, flood_union, how="intersection")
+        flooded = gpd.overlay(zone_gdf, flood_union, how="intersection", keep_geom_type=False)
         if flooded.empty:
             return _empty
 
@@ -234,7 +234,7 @@ def compute_mobility_flood_fractions(
     b5 = bld[[building_id_col, "geometry"]].copy()
     b5["geometry"] = b5.geometry.buffer(params.buffer_zone1_m)
     # Erase building footprint from buffer
-    bu5 = gpd.overlay(b5, buildings_union, how="difference")
+    bu5 = gpd.overlay(b5, buildings_union, how="difference", keep_geom_type=False)
     tab5 = _tabulate(bu5)
     logger.debug("MA step 3.1 zone1: done in %.2fs", time.perf_counter() - _t_z1)
 
@@ -250,9 +250,9 @@ def compute_mobility_flood_fractions(
     b15 = bld[[building_id_col, "geometry"]].copy()
     b15["geometry"] = b15.geometry.buffer(params.buffer_zone2_m)
     # Erase buildings from buffer ring
-    bu15 = gpd.overlay(b15, buildings_union, how="difference")
+    bu15 = gpd.overlay(b15, buildings_union, how="difference", keep_geom_type=False)
     # Clip to street polygons
-    bus15 = gpd.overlay(streets_poly, bu15, how="intersection")
+    bus15 = gpd.overlay(streets_poly, bu15, how="intersection", keep_geom_type=False)
     tab15 = _tabulate(bus15)
     logger.debug("MA step 3.1 zone2: done in %.2fs", time.perf_counter() - _t_z2)
 
@@ -275,9 +275,9 @@ def compute_mobility_flood_fractions(
     b1530 = b15.copy()
     b1530["geometry"] = b15.geometry.buffer(ring_width)
     # Ring = B1530 \ B15
-    b1530 = gpd.overlay(b1530, b15, how="difference")
+    b1530 = gpd.overlay(b1530, b15, how="difference", keep_geom_type=False)
     # Clip to streets
-    bus30 = gpd.overlay(streets_poly, b1530, how="intersection")
+    bus30 = gpd.overlay(streets_poly, b1530, how="intersection", keep_geom_type=False)
     tab30 = _tabulate(bus30)
     logger.debug("MA step 3.1 zone3: done in %.2fs", time.perf_counter() - _t_z3)
 
