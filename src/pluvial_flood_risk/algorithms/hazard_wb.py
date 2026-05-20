@@ -58,6 +58,9 @@ Open-source equivalents of the arcpy operations
 
 from __future__ import annotations
 
+import logging
+import time
+
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -66,6 +69,8 @@ from shapely.ops import unary_union
 
 from ..models.field_names import HAZARD_WELL_BEING
 from ..models.inputs import HazardParams
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Column-name helpers
@@ -174,11 +179,18 @@ def compute_wb_flood_fractions(
     # Iterate over depth classes
     # ------------------------------------------------------------------
     depth_classes = sorted(flood_layers["level_cm"].dropna().unique().astype(int))
+    logger.debug(
+        "WB step 4.1: %d buildings, depth classes %s",
+        len(bld),
+        depth_classes,
+    )
 
     result = pd.DataFrame(index=all_ids)
     result.index.name = "id"
 
     for depth_cm in depth_classes:
+        _t_depth = time.perf_counter()
+        logger.debug("WB step 4.1 depth=%dcm: start overlay", depth_cm)
         flood_at_depth = flood_layers[flood_layers["level_cm"] == depth_cm].copy()
 
         flood_union = gpd.GeoDataFrame(
@@ -219,6 +231,11 @@ def compute_wb_flood_fractions(
 
         result[area_col] = tab[area_col].reindex(all_ids, fill_value=0.0)
         result[frac_col] = tab[frac_col].reindex(all_ids, fill_value=0.0)
+        logger.debug(
+            "WB step 4.1 depth=%dcm: done in %.2fs",
+            depth_cm,
+            time.perf_counter() - _t_depth,
+        )
 
     return result
 
@@ -310,6 +327,20 @@ def run_hazard_wb_pipeline(
     if params is None:
         params = HazardParams()
 
+    logger.debug(
+        "WB pipeline start: %d buildings, %d flood features",
+        len(buildings),
+        len(flood_layers),
+    )
+    _t0 = time.perf_counter()
     result = compute_wb_flood_fractions(buildings, flood_layers, params)
+    logger.debug("WB step 4.1 complete: %.2fs", time.perf_counter() - _t0)
+
+    _t1 = time.perf_counter()
     result[HAZARD_WELL_BEING] = compute_hazard_wb(result, params)
+    logger.debug(
+        "WB step 4.2 complete: %.2fs — total pipeline: %.2fs",
+        time.perf_counter() - _t1,
+        time.perf_counter() - _t0,
+    )
     return result
