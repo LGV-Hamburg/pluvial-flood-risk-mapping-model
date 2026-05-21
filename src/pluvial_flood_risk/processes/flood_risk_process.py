@@ -63,6 +63,7 @@ from ..models.field_names import (
     RISK_CLASS_MOBILITY_ACCESSIBILITY,
     RISK_CLASS_WELL_BEING,
     SENSITIVITY_INDEX,
+    SINGLE_PARENTS,
     SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
     SOCIAL_VULNERABILITY_INDEX,
     SOCIAL_WELFARE_RECIPIENTS,
@@ -344,6 +345,18 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                                         "minimum": 0.0,
                                         "maximum": 1.0,
                                         "default": 0.7,
+                                    },
+                                    "single_parents": {
+                                        "type": "number",
+                                        "minimum": 0.0,
+                                        "maximum": 1.0,
+                                        "default": 0.0,
+                                        "description": (
+                                            "Sensitivity weight for single-parent "
+                                            "households. Default 0 excludes this "
+                                            "indicator. Set > 0 and adjust other "
+                                            "sensitivity weights to sum to 1.0."
+                                        ),
                                     },
                                     "social_welfare_recipients": {
                                         "type": "number",
@@ -698,6 +711,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             SOCIAL_WELFARE_RECIPIENTS,
             NO_HIGHSCHOOL_DIPLOMA,
         ]
+        if params.vulnerability.sensitivity_weights.single_parents > 0:
+            vulnerability_cols.append(SINGLE_PARENTS)
         sample_props = features[0]["properties"] if features else {}
         indicators_missing = any(
             col not in sample_props for col in vulnerability_cols

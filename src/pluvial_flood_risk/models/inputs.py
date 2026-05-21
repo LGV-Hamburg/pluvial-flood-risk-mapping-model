@@ -21,14 +21,31 @@ class SensitivityWeights(BaseModel):
 
     Defaults from Vogelbacher et al. (2025), Table / line 155:
         ES (elderly singles) = 0.7, C (children) = 0.3.
+
+    Optionally include single_parents (SP).  When SP weight > 0 the user
+    must adjust the other weights so all three sum to 1.0.
     """
 
     children_under_10: float = Field(default=0.3, ge=0.0, le=1.0)
     elderly_singles_over_65: float = Field(default=0.7, ge=0.0, le=1.0)
+    single_parents: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Weight for single-parent households in sensitivity TOPSIS. "
+            "Default 0.0 excludes this indicator (paper baseline). "
+            "Set > 0 and adjust other weights to include it."
+        ),
+    )
 
     @model_validator(mode="after")
     def weights_sum_to_one(self) -> SensitivityWeights:
-        total = self.children_under_10 + self.elderly_singles_over_65
+        total = (
+            self.children_under_10
+            + self.elderly_singles_over_65
+            + self.single_parents
+        )
         if abs(total - 1.0) > 1e-9:
             raise ValueError(f"SensitivityWeights must sum to 1.0, got {total:.6f}")
         return self
