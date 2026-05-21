@@ -107,7 +107,7 @@ def run_risk_pipeline(
         ``pluvial_flood_risk_well_being`` and
         ``pluvial_flood_risk_mobility_accessibility``.
     """
-    logger.debug("Risk pipeline start: %d buildings", len(df))
+    logger.info("Risk pipeline start: %d buildings", len(df))
     _t0 = time.perf_counter()
     result = df.copy()
     result[PLUVIAL_FLOOD_RISK_WELL_BEING] = compute_risk(
@@ -122,5 +122,5 @@ def run_risk_pipeline(
         df[HAZARD_MOBILITY_ACCESSIBILITY],
         params,
     )
-    logger.debug("Risk pipeline complete: %.2fs", time.perf_counter() - _t0)
+    logger.info("Risk pipeline complete: %.2fs", time.perf_counter() - _t0)
     return result

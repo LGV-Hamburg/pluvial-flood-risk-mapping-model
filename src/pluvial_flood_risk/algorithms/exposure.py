@@ -223,7 +223,7 @@ def run_exposure_pipeline(df: pd.DataFrame) -> pd.DataFrame:
         * ``exposure_mobility_accessibility``
     """
     out = df.copy()
-    logger.debug("Exposure pipeline start: %d buildings", len(out))
+    logger.info("Exposure pipeline start: %d buildings", len(out))
     _t0 = time.perf_counter()
 
     # Step 2a — Net usable floor area
@@ -238,5 +238,5 @@ def run_exposure_pipeline(df: pd.DataFrame) -> pd.DataFrame:
     # Step 2d — Mobility exposure index / EMA  (Eq. 10)
     out[EXPOSURE_MOBILITY_ACCESSIBILITY] = compute_exposure_mobility_accessibility(out)
 
-    logger.debug("Exposure pipeline complete: %.2fs", time.perf_counter() - _t0)
+    logger.info("Exposure pipeline complete: %.2fs", time.perf_counter() - _t0)
     return out

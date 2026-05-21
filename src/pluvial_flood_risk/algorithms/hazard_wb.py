@@ -179,7 +179,7 @@ def compute_wb_flood_fractions(
     # Iterate over depth classes
     # ------------------------------------------------------------------
     depth_classes = sorted(flood_layers["level_cm"].dropna().unique().astype(int))
-    logger.debug(
+    logger.info(
         "WB step 4.1: %d buildings, depth classes %s",
         len(bld),
         depth_classes,
@@ -328,18 +328,18 @@ def run_hazard_wb_pipeline(
     if params is None:
         params = HazardParams()
 
-    logger.debug(
+    logger.info(
         "WB pipeline start: %d buildings, %d flood features",
         len(buildings),
         len(flood_layers),
     )
     _t0 = time.perf_counter()
     result = compute_wb_flood_fractions(buildings, flood_layers, params)
-    logger.debug("WB step 4.1 complete: %.2fs", time.perf_counter() - _t0)
+    logger.info("WB step 4.1 complete: %.2fs", time.perf_counter() - _t0)
 
     _t1 = time.perf_counter()
     result[HAZARD_WELL_BEING] = compute_hazard_wb(result, params)
-    logger.debug(
+    logger.info(
         "WB step 4.2 complete: %.2fs — total pipeline: %.2fs",
         time.perf_counter() - _t1,
         time.perf_counter() - _t0,

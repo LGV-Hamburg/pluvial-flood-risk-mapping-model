@@ -225,7 +225,7 @@ def compute_mobility_flood_fractions(
     # ------------------------------------------------------------------
     # Zone 1 — 5 m direct-access buffer (no street clip)
     # ------------------------------------------------------------------
-    logger.debug(
+    logger.info(
         "MA step 3.1 zone1: buffer=%.1fm, %d buildings",
         params.buffer_zone1_m,
         len(bld),
@@ -236,12 +236,12 @@ def compute_mobility_flood_fractions(
     # Erase building footprint from buffer
     bu5 = gpd.overlay(b5, buildings_union, how="difference", keep_geom_type=False)
     tab5 = _tabulate(bu5)
-    logger.debug("MA step 3.1 zone1: done in %.2fs", time.perf_counter() - _t_z1)
+    logger.info("MA step 3.1 zone1: done in %.2fs", time.perf_counter() - _t_z1)
 
     # ------------------------------------------------------------------
     # Zone 2 — 0–15 m street zone
     # ------------------------------------------------------------------
-    logger.debug(
+    logger.info(
         "MA step 3.1 zone2: buffer=%.1fm, %d streets",
         params.buffer_zone2_m,
         len(streets_poly),
@@ -254,7 +254,7 @@ def compute_mobility_flood_fractions(
     # Clip to street polygons
     bus15 = gpd.overlay(streets_poly, bu15, how="intersection", keep_geom_type=False)
     tab15 = _tabulate(bus15)
-    logger.debug("MA step 3.1 zone2: done in %.2fs", time.perf_counter() - _t_z2)
+    logger.info("MA step 3.1 zone2: done in %.2fs", time.perf_counter() - _t_z2)
 
     # ------------------------------------------------------------------
     # Zone 3 — outer street ring (B15 → B15+ring_width)
@@ -265,7 +265,7 @@ def compute_mobility_flood_fractions(
             f"buffer_zone3_m ({params.buffer_zone3_m}) must be greater than "
             f"buffer_zone2_m ({params.buffer_zone2_m}) to form a valid outer ring."
         )
-    logger.debug(
+    logger.info(
         "MA step 3.1 zone3: ring %.1fm–%.1fm, %d streets",
         params.buffer_zone2_m,
         params.buffer_zone3_m,
@@ -279,7 +279,7 @@ def compute_mobility_flood_fractions(
     # Clip to streets
     bus30 = gpd.overlay(streets_poly, b1530, how="intersection", keep_geom_type=False)
     tab30 = _tabulate(bus30)
-    logger.debug("MA step 3.1 zone3: done in %.2fs", time.perf_counter() - _t_z3)
+    logger.info("MA step 3.1 zone3: done in %.2fs", time.perf_counter() - _t_z3)
 
     # ------------------------------------------------------------------
     # Assemble result DataFrame — all buildings present, missing → 0
@@ -426,7 +426,7 @@ def run_hazard_ma_pipeline(
     if params is None:
         params = HazardParams()
 
-    logger.debug(
+    logger.info(
         "MA pipeline start: %d buildings, %d streets, %d flood features",
         len(buildings),
         len(streets),
@@ -434,11 +434,11 @@ def run_hazard_ma_pipeline(
     )
     _t0 = time.perf_counter()
     result = compute_mobility_flood_fractions(buildings, streets, flood, params)
-    logger.debug("MA step 3.1 complete: %.2fs", time.perf_counter() - _t0)
+    logger.info("MA step 3.1 complete: %.2fs", time.perf_counter() - _t0)
 
     _t1 = time.perf_counter()
     result[HAZARD_MOBILITY_ACCESSIBILITY] = compute_hazard_ma(result, params)
-    logger.debug(
+    logger.info(
         "MA step 3.2 complete: %.2fs — total pipeline: %.2fs",
         time.perf_counter() - _t1,
         time.perf_counter() - _t0,
