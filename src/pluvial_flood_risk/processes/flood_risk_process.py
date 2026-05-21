@@ -676,6 +676,10 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     def vulnerability_pipeline(self, exec_body: dict) -> dict:
         """Steps 1.1-1.4: Sensitivity → Coping Capacity → SVI → SV_PF.
 
+        When vulnerability indicators are missing from building features but a
+        ``statistical_units`` input is provided, they are joined from the
+        statistical units (by attribute or spatially).
+
         Returns:
             dict with keys: sensitivity_index, coping_capacity_index,
             social_vulnerability_index, social_vulnerability_flood_potential
@@ -686,11 +690,40 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         params = PipelineParams.model_validate(inputs.get("params", {}))
 
         features: list[dict] = buildings_fc["features"]
-        rows = [
-            {"_id": f.get("id") or f["properties"].get("id"), **f["properties"]}
-            for f in features
+
+        # Check if vulnerability indicators need to be joined from stat units
+        vulnerability_cols = [
+            CHILDREN_UNDER_10,
+            ELDERLY_SINGLES_OVER_65,
+            SOCIAL_WELFARE_RECIPIENTS,
+            NO_HIGHSCHOOL_DIPLOMA,
         ]
-        df = pd.DataFrame(rows).set_index("_id")
+        sample_props = features[0]["properties"] if features else {}
+        indicators_missing = any(
+            col not in sample_props for col in vulnerability_cols
+        )
+
+        if indicators_missing and "statistical_units" in inputs:
+            # Parse as GeoDataFrame to do the spatial/attribute join
+            gdf = self._convert_geojson_to_gdf(features, params.target_crs)
+            gdf_metric = self._project_crs_to_metric(gdf, params.target_crs)
+            gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
+
+            stat_units_fc = inputs["statistical_units"]
+            stat_gdf = self._convert_geojson_to_gdf(
+                stat_units_fc["features"], params.target_crs
+            )
+            gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
+
+            if "id" in gdf_metric.columns:
+                gdf_metric = gdf_metric.set_index("id")
+            df = pd.DataFrame(gdf_metric.drop(columns="geometry"))
+        else:
+            rows = [
+                {"_id": f.get("id") or f["properties"].get("id"), **f["properties"]}
+                for f in features
+            ]
+            df = pd.DataFrame(rows).set_index("_id")
 
         result_df = run_vulnerability_pipeline(df, params.vulnerability)
 
