@@ -3,16 +3,31 @@
 from __future__ import annotations
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 
 from .models.field_names import (
     BUILDING_FOOTPRINT_AREA_M2,
     BUILDING_TYPE,
+    CHILDREN_UNDER_10,
+    ELDERLY_SINGLES_OVER_65,
     FLOORS_ABOVE_GROUND,
     LIVING_AREA_M2_STATISTICAL_UNIT,
+    NO_HIGHSCHOOL_DIPLOMA,
     RESIDENTS_IN_STATISTICAL_UNIT,
+    SOCIAL_WELFARE_RECIPIENTS,
     STATISTICAL_UNIT_ID,
 )
+
+# Census columns on statistical units that should be joined onto buildings
+# when absent.  Order does not matter.
+_CENSUS_COLUMNS = [
+    RESIDENTS_IN_STATISTICAL_UNIT,
+    CHILDREN_UNDER_10,
+    ELDERLY_SINGLES_OVER_65,
+    SOCIAL_WELFARE_RECIPIENTS,
+    NO_HIGHSCHOOL_DIPLOMA,
+]
 
 
 def join_statistical_unit_attributes(
@@ -20,6 +35,14 @@ def join_statistical_unit_attributes(
     stat_units: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
     """Join census attributes from *stat_units* onto *buildings*.
+
+    Columns joined (when present on *stat_units* and absent from *buildings*):
+    ``residents_in_statistical_unit``, ``children_under_10``,
+    ``elderly_singles_over_65``, ``social_welfare_recipients``,
+    ``no_highschool_diploma``.
+
+    Additionally, ``living_area_m2_statistical_unit`` is always derived from
+    building geometry grouped by statistical unit.
 
     The join strategy is chosen automatically:
 
@@ -37,21 +60,16 @@ def join_statistical_unit_attributes(
     Parameters
     ----------
     buildings:
-        Building GeoDataFrame, already projected to a metric CRS.  Must not
-        yet contain ``residents_in_statistical_unit`` or
-        ``living_area_m2_statistical_unit`` (those are the columns this
-        function adds).
+        Building GeoDataFrame, already projected to a metric CRS.
     stat_units:
-        Statistical unit GeoDataFrame with column ``residents`` and — for the
-        attribute-join path — ``statistical_unit_id``. May carry any CRS; will
-        be reprojected to *buildings* CRS when needed.
+        Statistical unit GeoDataFrame carrying census attributes. May carry
+        any CRS; will be reprojected to *buildings* CRS when needed.
 
     Returns
     -------
     gpd.GeoDataFrame
-        *buildings* with two additional columns:
-        ``residents_in_statistical_unit`` and
-        ``living_area_m2_statistical_unit`` (derived from building features).
+        *buildings* with census columns and ``living_area_m2_statistical_unit``
+        added.
     """
     stat_units = stat_units.rename(columns={"residents": RESIDENTS_IN_STATISTICAL_UNIT})
 
@@ -67,6 +85,13 @@ def join_statistical_unit_attributes(
             f"columns: {missing_cols}"
         )
 
+    # Determine which census columns are available on stat_units and missing
+    # from buildings — those will be joined.
+    cols_to_join = [
+        col for col in _CENSUS_COLUMNS
+        if col in stat_units.columns and col not in buildings.columns
+    ]
+
     building_living_area = (
         (buildings[FLOORS_ABOVE_GROUND] - (buildings[BUILDING_TYPE] - 1))
         * buildings[BUILDING_FOOTPRINT_AREA_M2]
@@ -79,7 +104,7 @@ def join_statistical_unit_attributes(
                 "statistical_units must contain 'statistical_unit_id' for "
                 "attribute-based joining."
             )
-        join_cols = [STATISTICAL_UNIT_ID, RESIDENTS_IN_STATISTICAL_UNIT]
+        join_cols = [STATISTICAL_UNIT_ID] + cols_to_join
         stat_df = pd.DataFrame(stat_units[join_cols]).drop_duplicates(
             subset=STATISTICAL_UNIT_ID
         )
@@ -97,13 +122,13 @@ def join_statistical_unit_attributes(
     if buildings.crs is None:
         raise ValueError("buildings GeoDataFrame must have a CRS set")
     stat_units = stat_units.to_crs(buildings.crs)
-    join_cols = [RESIDENTS_IN_STATISTICAL_UNIT, "geometry"]
+    sjoin_cols = cols_to_join + ["geometry"]
     if STATISTICAL_UNIT_ID in stat_units.columns:
-        join_cols.insert(0, STATISTICAL_UNIT_ID)
+        sjoin_cols.insert(0, STATISTICAL_UNIT_ID)
 
     centroids = buildings.copy()
     centroids.geometry = buildings.geometry.centroid
-    joined = centroids.sjoin(stat_units[join_cols], how="left", predicate="within")
+    joined = centroids.sjoin(stat_units[sjoin_cols], how="left", predicate="within")
     # Guard against overlapping unit polygons producing duplicate rows
     joined = joined[~joined.index.duplicated(keep="first")]
 
@@ -113,7 +138,10 @@ def join_statistical_unit_attributes(
         unit_key = result[STATISTICAL_UNIT_ID]
     else:
         unit_key = joined["index_right"]
-    result[RESIDENTS_IN_STATISTICAL_UNIT] = joined[RESIDENTS_IN_STATISTICAL_UNIT]
+
+    for col in cols_to_join:
+        result[col] = joined[col].values
+
     result[LIVING_AREA_M2_STATISTICAL_UNIT] = (
         pd.Series(building_living_area, index=result.index)
         .groupby(unit_key)
