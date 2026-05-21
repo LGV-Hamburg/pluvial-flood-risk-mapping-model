@@ -13,46 +13,38 @@
         "properties": {
           "properties": {
             "type": "object",
-            "required": [
-              "residents_in_statistical_unit",
-              "single_parents",
-              "no_highschool_diploma",
-              "social_welfare_recipients",
-              "elderly_singles_over_65",
-              "children_under_10"
-            ],
             "properties": {
               "statistical_unit_id": {
                 "type": ["integer", "string"],
                 "description": "Unique key matching building.statistical_unit_id"
               },
               "residents_in_statistical_unit": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Total residents registered in this statistical unit"
               },
               "single_parents": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Number of single-parent households in this statistical unit"
               },
               "no_highschool_diploma": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Number of residents without a high school diploma in this statistical unit"
               },
               "social_welfare_recipients": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Number of social welfare recipients in this statistical unit"
               },
               "elderly_singles_over_65": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Number of single-person households with residents over 65 in this statistical unit"
               },
               "children_under_10": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Number of children under 10 years old in this statistical unit"
               }
