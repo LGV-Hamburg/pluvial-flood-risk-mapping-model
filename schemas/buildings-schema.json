@@ -50,6 +50,11 @@
                 "minimum": 0,
                 "description": "Number of elderly singles over 65 years (sensitivity indicator ES)"
               },
+              "single_parents": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "description": "Number of single-parent households (optional sensitivity indicator SP)"
+              },
               "social_welfare_recipients": {
                 "type": ["number", "null"],
                 "minimum": 0,
