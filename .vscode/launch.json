@@ -55,6 +55,7 @@
                 "-A",
                 "fastprocesses.worker.celery_app",
                 "worker",
+                "-Q", "floodrisk",
                 "--loglevel=debug",
                 "--pool", "threads",
                 "--concurrency", "4"
