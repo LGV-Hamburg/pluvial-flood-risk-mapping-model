@@ -38,6 +38,7 @@ LABEL maintainer="Stefan Schuhart" \
 
 RUN --mount=type=cache,target=$CACHE_DIR apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates  \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # add user and group
