@@ -89,17 +89,24 @@ _INPUT_BUILDING_OUTPUT_COLUMNS = [
 # ---------------------------------------------------------------------------
 
 
-class RiskResult(BaseModel):
-    """Combined output of the pluvial flood risk pipeline."""
+class PfRiskResult(BaseModel):
+    """Combined output of the pluvial flood risk pipeline.
+
+    Fields mirror the process outputs declared in ``process_description.outputs``.
+    """
 
     # GeoJSON FeatureCollection containing all computed columns for every building
-    risk_features: dict
+    risk_buildings: dict | None = None
 
     # Head/tail break thresholds for cartographic classification
-    classification_breaks_wb: list[float]  # for pluvial_flood_risk_well_being
-    classification_breaks_ma: list[
-        float
-    ]  # for pluvial_flood_risk_mobility_accessibility
+    classification_breaks_wb: list[float] | None = None  # for pluvial_flood_risk_well_being
+    classification_breaks_ma: list[float] | None = None  # for pluvial_flood_risk_mobility_accessibility
+
+    # Optional aggregated outputs
+    healpix_aggregation: dict | None = None
+    risk_statistical_units: dict | None = None
+    validation_report: dict | None = None
+
 
 
 #---------------------------------------------------------------------------
@@ -515,6 +522,53 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                                 ),
                             }
                         ),
+                        "healpix_params": Schema.model_validate(
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "depth": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 29,
+                                        "default": 15,
+                                        "description": (
+                                            "HEALPix depth (nside = 2^depth). "
+                                            "depth=15 → ~0.8 km² per cell at mid-latitudes. "
+                                            "depth=12 → ~50 km² (district level). "
+                                            "depth=17 → ~50 m² (building cluster level)."
+                                        ),
+                                    },
+                                    "agg_func": {
+                                        "type": "string",
+                                        "enum": ["mean", "max", "sum", "median"],
+                                        "default": "mean",
+                                        "description": (
+                                            "Aggregation function applied to all risk columns. "
+                                            "Use 'max' for worst-case mapping, 'mean' for average exposure."
+                                        ),
+                                    },
+                                    "min_buildings": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "default": 3,
+                                        "description": (
+                                            "Minimum number of buildings per HEALPix cell required "
+                                            "for the cell to appear in the output (privacy threshold)."
+                                        ),
+                                    },
+                                    "columns": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "default": None,
+                                        "description": (
+                                            "Explicit list of columns to aggregate. "
+                                            "Omit to use all available risk/hazard columns "
+                                            "(PFRWB, PFRMA, HWB, HMA, social_vulnerability_index, …)."
+                                        ),
+                                    },
+                                },
+                            }
+                        ),
                         "output": Schema.model_validate(
                             {
                                 "type": "object",
@@ -551,8 +605,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             ),
         },
         outputs={
-            "risk_features": ProcessOutput(
-                title="Risk Features",
+            "risk_buildings": ProcessOutput(
+                title="Risk Buildings",
                 description=(
                     "GeoJSON FeatureCollection of building footprints enriched with "
                     "all computed columns: sensitivity_index, coping_capacity_index, "
@@ -585,6 +639,166 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "pluvial_flood_risk_mobility_accessibility."
                 ),
                 schema=Schema(type="array", items=Schema.model_validate({"type": "number"})),
+            ),
+            # ── new: HEALPix aggregation ─────────────────────────────────────────────────
+            "healpix_aggregation": ProcessOutput(
+                title="HEALPix Aggregated Risk & Vulnerability",
+                description=(
+                    "Building-level risk and vulnerability indicators aggregated to "
+                    "HEALPix cells on the WGS84 ellipsoid (crs: EPSG:4326). "
+                    "Cell resolution is controlled by 'params.healpix_params.depth' "
+                    "(default: 15, ~0.8 km² per cell at mid-latitudes). "
+                    "Cells with fewer buildings than 'params.healpix_params.min_buildings' "
+                    "are suppressed (privacy threshold). "
+                    "Aggregated columns: PFRWB, PFRMA, HWB, HMA, "
+                    "social_vulnerability_index, social_vulnerability_flood_potential, "
+                    "sensitivity_index, coping_capacity_index, n_buildings. "
+                    "Supported encodings: GeoJSON (default), FlatGeobuf, PNG image "
+                    "(choropleth, base64-encoded inline value)."
+                ),
+                schema=Schema(
+                    oneOf=[
+                        Schema(
+                            description="GeoJSON FeatureCollection (default)",
+                            allOf=[
+                                Schema(format="geojson-feature-collection"),
+                                Schema(ref="https://geojson.org/schema/FeatureCollection.json"),
+                            ],
+                        ),
+                        Schema(
+                            description="FlatGeobuf binary encoding",
+                            type="string",
+                            contentEncoding="binary",
+                            contentMediaType="application/flatgeobuf",
+                        ),
+                        Schema(
+                            description=(
+                                "Rendered choropleth map as a base64-encoded PNG. "
+                                "Suitable for inline display when no GIS client is available."
+                            ),
+                            type="string",
+                            contentEncoding="base64",
+                            contentMediaType="image/png",
+                        ),
+                    ]
+                ),
+            ),
+            # ── new: Statistical unit aggregates ─────────────────────────────────────────
+            "risk_statistical_units": ProcessOutput(
+                title="Statistical Unit Aggregates",
+                description=(
+                    "All computed building-level indicators aggregated to statistical "
+                    "unit polygons (mean per unit unless overridden). "
+                    "Requires the 'statistical_units' input to be present. "
+                    "Aggregated columns match risk_buildings: "
+                    "sensitivity_index, coping_capacity_index, "
+                    "social_vulnerability_index, social_vulnerability_flood_potential, "
+                    "residents_per_building, residents_ground_floor, "
+                    "hazard_well_being, hazard_mobility_accessibility, "
+                    "pluvial_flood_risk_well_being, "
+                    "pluvial_flood_risk_mobility_accessibility, "
+                    "risk_class_wb, risk_class_ma, n_buildings. "
+                    "Output CRS matches 'params.target_crs' (or EPSG:4326 fallback)."
+                ),
+                schema=Schema(
+                    oneOf=[
+                        Schema(
+                            description="GeoJSON FeatureCollection (default)",
+                            allOf=[
+                                Schema(format="geojson-feature-collection"),
+                                Schema(ref="https://geojson.org/schema/FeatureCollection.json"),
+                            ],
+                        ),
+                        Schema(
+                            description="FlatGeobuf binary encoding",
+                            type="string",
+                            contentEncoding="binary",
+                            contentMediaType="application/flatgeobuf",
+                        ),
+                    ]
+                ),
+            ),
+
+            # ── new: Validation: machine-readable summary ────────────────────────────────
+            "validation_report": ProcessOutput(
+                title="Validation Report",
+                description=(
+                    "JSON summary of buildings dropped during pipeline execution, "
+                    "grouped by omission cause. Enables graceful partial execution: "
+                    "the pipeline continues with valid features and reports which "
+                    "buildings were excluded and why. "
+                    "Causes include: missing_required_property, invalid_geometry, "
+                    "crs_unprojectable, join_no_statistical_unit, "
+                    "negative_or_zero_floor_area, out_of_flood_layer_extent. "
+                    "Fields: total_input, total_processed, total_dropped, "
+                    "drop_summary [{cause, count, example_ids[]}]."
+                ),
+                schema=Schema(
+                    type="object",
+                    required=["total_input", "total_processed", "total_dropped", "drop_summary"],
+                    properties={
+                        "total_input": Schema.model_validate({"type": "integer", "minimum": 0}),
+                        "total_processed": Schema.model_validate({"type": "integer", "minimum": 0}),
+                        "total_dropped": Schema.model_validate({"type": "integer", "minimum": 0}),
+                        "drop_summary": Schema.model_validate({
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["cause", "count"],
+                                "properties": {
+                                    "cause": {
+                                        "type": "string",
+                                        "enum": [
+                                            "missing_required_property",
+                                            "invalid_geometry",
+                                            "crs_unprojectable",
+                                            "join_no_statistical_unit",
+                                            "negative_or_zero_floor_area",
+                                            "out_of_flood_layer_extent",
+                                        ],
+                                    },
+                                    "count": {"type": "integer", "minimum": 1},
+                                    "example_ids": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "maxItems": 10,
+                                        "description": "Up to 10 feature IDs for debugging",
+                                    },
+                                },
+                            },
+                        }),
+                    },
+                ),
+            ),
+
+            # ── new: Validation: dropped features with geometry ──────────────────────────
+            "validation_dropped_buildings": ProcessOutput(
+                title="Dropped Buildings (Spatial)",
+                description=(
+                    "GeoJSON FeatureCollection (or FlatGeobuf) of all building features "
+                    "excluded from processing. Each feature retains its original geometry "
+                    "and properties, extended with 'omission_cause' (string) and "
+                    "'omission_detail' (string, human-readable explanation). "
+                    "Useful for spatial QA — load directly into a GIS to review "
+                    "which areas are affected."
+                ),
+                schema=Schema(
+                    oneOf=[
+                        Schema(
+                            description="GeoJSON FeatureCollection (default)",
+                            allOf=[
+                                Schema(format="geojson-feature-collection"),
+                                Schema(ref="https://geojson.org/schema/FeatureCollection.json"),
+                            ],
+                        ),
+                        Schema(
+                            description="FlatGeobuf binary encoding",
+                            type="string",
+                            contentEncoding="binary",
+                            contentMediaType="application/flatgeobuf",
+                        ),
+                    ]
+                ),
             ),
         },
         keywords=[
@@ -933,7 +1147,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     # results = {step_name: result_dict}
     # ------------------------------------------------------------------
 
-    def merge_results(self, results: dict[str, dict], exec_body: dict) -> RiskResult:
+    def merge_results(self, results: dict[str, dict], exec_body: dict) -> PfRiskResult:
         """Merge partial results, calculate risk indices (Eq. 14/15), classify.
 
         Args:
@@ -957,7 +1171,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
 
         inputs: dict = exec_body["inputs"]
         source_features = inputs["buildings"]["features"]
-        params = PipelineParams.model_validate(inputs.get("params", {}))
+        params: PipelineParams = PipelineParams.model_validate(inputs.get("params", {}))
 
         partial_frames: list[pd.DataFrame] = []
         for step_name in required_steps:
@@ -1032,13 +1246,102 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 }
             )
 
-        risk_features = {
+        risk_buildings = {
             "type": "FeatureCollection",
             "features": enriched_features,
         }
 
-        return RiskResult(
-            risk_features=risk_features,
+        # Candidate columns for aggregation (used by HEALPix and unit aggregation)
+        candidate_cols = [
+            PLUVIAL_FLOOD_RISK_WELL_BEING,
+            PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
+            HAZARD_WELL_BEING,
+            HAZARD_MOBILITY_ACCESSIBILITY,
+            SENSITIVITY_INDEX,
+            COPING_CAPACITY_INDEX,
+            SOCIAL_VULNERABILITY_INDEX,
+            SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
+        ]
+
+        # Optional aggregated outputs
+        healpix_agg_json = None
+        if params.healpix_params.depth > 0:
+            try:
+                # Build a GeoDataFrame from source features and attach numeric columns
+                blds = self._convert_geojson_to_gdf(source_features, params.target_crs)
+                if "id" in blds.columns:
+                    blds = blds.set_index("id")
+                # Ensure string index for lookup against classified.data
+                blds.index = blds.index.astype(str)
+
+                # Copy numerical columns from classified.data (align by id)
+                classified_df = classified.data.copy()
+                classified_df.index = classified_df.index.astype(str)
+                for col in candidate_cols:
+                    if col in classified_df.columns:
+                        # reindex will introduce NaN for missing rows
+                        blds[col] = classified_df[col].reindex(blds.index).values
+
+                # Lazy import of aggregation helper
+                from ..algorithms.aggregations import aggregate_to_healpix
+
+                healpix_gdf = aggregate_to_healpix(
+                    blds,
+                    depth=params.healpix_params.depth,
+                    risk_columns=params.healpix_params.columns,
+                    agg_func=params.healpix_params.agg_func,
+                    min_buildings=params.healpix_params.min_buildings,
+                )
+                healpix_agg_json = json.loads(healpix_gdf.to_json())
+            except Exception:
+                healpix_agg_json = None
+
+        # Optional: aggregate results to statistical units when provided
+        stat_units_json = None
+        if "statistical_units" in inputs:
+            try:
+                stat_fc = inputs["statistical_units"]
+                stat_gdf = self._convert_geojson_to_gdf(stat_fc["features"], params.target_crs)
+
+                # Prepare building values for join
+                bld_for_join = self._convert_geojson_to_gdf(source_features, params.target_crs)
+                if "id" in bld_for_join.columns:
+                    bld_for_join = bld_for_join.set_index("id")
+                bld_for_join.index = bld_for_join.index.astype(str)
+
+                # Attach numeric columns from classified.data where present
+                for col in candidate_cols:
+                    if col in classified.data.columns:
+                        bld_for_join[col] = classified.data[col].reindex(bld_for_join.index).values
+
+                available_agg = [c for c in candidate_cols if c in bld_for_join.columns]
+                if len(bld_for_join) > 0 and len(stat_gdf) > 0 and available_agg:
+                    try:
+                        joined = gpd.sjoin(
+                            bld_for_join[ ["geometry"] + available_agg ],
+                            stat_gdf[["geometry"]],
+                            how="inner",
+                            predicate="intersects",
+                        )
+                        for col in available_agg:
+                            agg = joined.groupby("index_right")[col].mean()
+                            stat_gdf[col] = stat_gdf.index.map(agg).fillna(0)
+                    except Exception:
+                        # Fallback: per-unit intersection loop (slower)
+                        for idx, unit in stat_gdf.iterrows():
+                            if unit.geometry is None or pd.isna(unit.geometry):
+                                for col in available_agg:
+                                    stat_gdf.at[idx, col] = 0
+                                continue
+                            in_unit = bld_for_join[ bld_for_join.geometry.intersects(unit.geometry) ]
+                            for col in available_agg:
+                                stat_gdf.at[idx, col] = in_unit[col].mean() if len(in_unit) > 0 else 0
+                    stat_units_json = json.loads(stat_gdf.to_json())
+            except Exception:
+                stat_units_json = None
+
+        return PfRiskResult(
+            risk_buildings=risk_buildings,
             classification_breaks_wb=[
                 cast(
                     float,
@@ -1059,4 +1362,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 )
                 for value in classified.breaks_mobility_accessibility
             ],
+            healpix_aggregation=healpix_agg_json,
+            risk_statistical_units=stat_units_json,
+            validation_report=None,
         )
