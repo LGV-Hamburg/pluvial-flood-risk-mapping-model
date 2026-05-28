@@ -1046,51 +1046,116 @@ files = [
 ]
 
 [[package]]
-name = "healpix"
-version = "2025.1"
-description = "Python package for HEALPix discretisation of the sphere"
+name = "healpix-geo"
+version = "0.1.2"
+description = ""
 optional = false
-python-versions = ">=3.9"
+python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "healpix-2025.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:a2e0a3f352ac67f7c7195a7bef73339eacd1362fc68852f3ce0de1c03feb764e"},
-    {file = "healpix-2025.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:c0232a332fd28cd3e5f14377d84491fc66d26ebc16c4c54cda3cb73eeb711b00"},
-    {file = "healpix-2025.1-cp310-cp310-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:22a9c5d9c3f55b534cf89f8c5642b84a93631583071633ef33dd6ba2378195b0"},
-    {file = "healpix-2025.1-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:3054f50e01f1fa6f7f2cf231a3c10466fd43dcd0824badb034a80413165b5ea8"},
-    {file = "healpix-2025.1-cp310-cp310-win32.whl", hash = "sha256:50625db312a43aed2d046d9b4341670521102f55b19ff3f4c0c99b171acadc14"},
-    {file = "healpix-2025.1-cp310-cp310-win_amd64.whl", hash = "sha256:73a47d37c5eaf3497ced4bb946431ad92f3f844f7367cdd8aa145e6c6d3f4cdc"},
-    {file = "healpix-2025.1-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:0a234657b9b69f5856277216bbdd7cd698f88d12e7e551cec52e1d832bc9c7bb"},
-    {file = "healpix-2025.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:6698e1a384ba82dae63f73623b1ea238975d1ebeed75c06d7627a800f40c0bb1"},
-    {file = "healpix-2025.1-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:34049ec1987194ad8ede160f1dc3b62e2958a6b8d8269ad52c90adee95a68d5b"},
-    {file = "healpix-2025.1-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:82d4b36093e7136cbe1e795877f1c25bb52f0ce22910defd5499fbe5a6c83818"},
-    {file = "healpix-2025.1-cp311-cp311-win32.whl", hash = "sha256:adbd2be0b449b69d1c6eb14f47d4eb31ba328ac64a65365fb327c692ebfc48e8"},
-    {file = "healpix-2025.1-cp311-cp311-win_amd64.whl", hash = "sha256:78123a17ee23cc4471dd38539494a13d1ea086194666a36359d43c9609ae4167"},
-    {file = "healpix-2025.1-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:89fad670639d9623ff3c171d9e5e74c7b927b93607d501ab6894463d8e625507"},
-    {file = "healpix-2025.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:341c6daa8bc2290a9f2e8ab540c23f53a9a9666bceabdb57d8283841198099d7"},
-    {file = "healpix-2025.1-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:1a1d41e0c2a98ef3d3cf48e18ca7edadb599641f1754e28e8df0a0a96471fdd4"},
-    {file = "healpix-2025.1-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:2e347f3c76407d7c8018cd8da7eccb4aebd715e46b8f60111dcf161e969bd25f"},
-    {file = "healpix-2025.1-cp312-cp312-win32.whl", hash = "sha256:d73b468d462a86866bc089f8234c25c97b3449639da7260555c3a9aed2ff8816"},
-    {file = "healpix-2025.1-cp312-cp312-win_amd64.whl", hash = "sha256:b553dcc6895229283dc86ee0b46790fe8b2489b6d06bdfe5dc08d1d099b63f84"},
-    {file = "healpix-2025.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:9ead63619d769f141b14d2ae3d68323d3df5d954ded87b440ba6d3d454664f02"},
-    {file = "healpix-2025.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:42d2953ae98697385dd4348dbdc2533fc153880867e4f877e086bf82b534d17f"},
-    {file = "healpix-2025.1-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:e8cacfd6359564c12c7bc81633e92fa7d6e74fffb834a1e08a38e88cb9ac3c50"},
-    {file = "healpix-2025.1-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:fa546ca045be0661dfc42f7a4e7996f2134dd07d0d5639ae8d7d1a6b293470a2"},
-    {file = "healpix-2025.1-cp313-cp313-win32.whl", hash = "sha256:c4bc98548f92e76539a98e9a4d769e4f69827fb28e7dad2ce6ceae506840a758"},
-    {file = "healpix-2025.1-cp313-cp313-win_amd64.whl", hash = "sha256:c9c782cc452587602b52a79a81ce1c0f4677c3083c6d1b64c94006ab7ecdab14"},
-    {file = "healpix-2025.1-cp39-cp39-macosx_10_9_x86_64.whl", hash = "sha256:2c47c8e2b8c6b8bb174ab8cbf79b5bca5bd5247b93c2f11a6031182feb9c6d7a"},
-    {file = "healpix-2025.1-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:0bb7563d6f9ef80be23228cf71c2573188fff892f14772af280f473eba2ce95a"},
-    {file = "healpix-2025.1-cp39-cp39-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:da8411fe37986296eb5d7f75c492a74389404f7279200b83d870ee467b691867"},
-    {file = "healpix-2025.1-cp39-cp39-musllinux_1_2_x86_64.whl", hash = "sha256:9a887af876cf066f3952c47ad8898fb05d2643988fe9f473bdc6841b6f606646"},
-    {file = "healpix-2025.1-cp39-cp39-win32.whl", hash = "sha256:55772517c7e52b58e4b7a36a1c24666ef7d0f2180e5b914b650bfd4eb31fbd44"},
-    {file = "healpix-2025.1-cp39-cp39-win_amd64.whl", hash = "sha256:db93741694c193de1d9d70fbcc8870051c0b5dc5c3ac8e71edc69a13b8f34415"},
-    {file = "healpix-2025.1.tar.gz", hash = "sha256:733f16f30c15d911c8209f4045f0b0934e5fcafa63b8b39d62e425a036adccea"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:2b538e0282ee98855787205b03db6cb0768d17907a8ace0d7a7c790d50049e87"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:0fe0173e5affc6f2e0de0db0526cf1eee37686ca2b723ce0bd3b40f366a963d7"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:404ec96999ed660fb61b04d09ecea7c84cbb9632000a8f31cfea01f9ecf9af33"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:0dba0a84d62b5fa6072fa54a9f7f25fb038acbc7721afdd13777f8d82785a166"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:ec878cfe49cb2504b1f93dd534f0e22b1668555f81b9343ee96cd69b78a889c3"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:d34611a371db8e584224b221267abf8b0936e389af665b55d03f9afc710cc68d"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:8501e5b6a777f3d974242983556cff59d1c4c80686fadfb060b256d855c2f3ec"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4357f3e3a9eca7b38f0703ba99835229cb53499b72d5c9a6da7055e5b8c838e8"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-musllinux_1_2_aarch64.whl", hash = "sha256:2ac4f31894311b92f8dd830090ee824690e93406996ad3859d3d81812c3730c8"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-musllinux_1_2_armv7l.whl", hash = "sha256:910ce90ab9377e8e91b07476a30dd93e9875d49e31cc04e834f0b7780c45f87a"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-musllinux_1_2_i686.whl", hash = "sha256:269a4fa192e50bf3d18435e11bcc0c6da6642369b6346c328bfe67c0b0bd1b89"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:29fb62ae31033b3729c5c616c5d6d4a4bb56f7c2ae69ebbf1b47cc451ed9c1a2"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-win32.whl", hash = "sha256:e0d705098e3683a7ecb368feb36dab359ee9136236bc625cbb5b8a42462e508e"},
+    {file = "healpix_geo-0.1.2-cp310-cp310-win_amd64.whl", hash = "sha256:70268ba7a8833a21950dcda51c701f894adee6d885b071d0b6123b74eeacdd68"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:1e2171a9427d05552b0d3673ae813bf37807b193bc912e01fe4278122e44a2ec"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:3e693c388d9287e3d6dedd36f15ed6d98bfc6f74d73165afd0f37344c8ec2e3f"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6fb0817987bed22c26b72c7b9d78267c6c1c00add48ab859cd09b314d2b7778f"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:0ddce4d05348e49a9ecaebf0b9f05b0f42bd816cd5f7393545167b9893fc123f"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:f2231d6bed2b949a981247b07f83a789467dba819d9abb1b7287b0a82194fb86"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:274ec7ac735ff96354a26af3b480caeb4506b73a1da5a132bae880e1cab97627"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:bdde45336eb1b44c323061f227ee97965c659f39e606ce026cafb6c1819765b7"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:80e6a862f76d6927e83ffab5bbe8d6250a4e3603ca62f81c0b6ed882a93c9efe"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:37657a194fb717fc95f32b3230bc6a9b4ee6dfea22b72f58d07e40cc3fa87184"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-musllinux_1_2_armv7l.whl", hash = "sha256:c75ee4c7e5b53c283cd6e4c56f1f59fea971662e083046ad41eca5f22617fb3f"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-musllinux_1_2_i686.whl", hash = "sha256:ebd6ee5c0ca4bb635b3cdd0ec3d152501a1361a638ca15495e37c20e551c749e"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:d3f7125818e7657a6b2de1fc38d31523844e1e229d486715066682f51dcad4aa"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-win32.whl", hash = "sha256:98f335851bbf3a1fd23cbeb4660efb4e5739191e0a71154e1a7b2be1e6b64bcb"},
+    {file = "healpix_geo-0.1.2-cp311-cp311-win_amd64.whl", hash = "sha256:325ec5805c8a2db64af1d3bc809dd79ffe4b8d6313735470541191b320f102e9"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:a52c8be53f679eba10958ec9517f3f8b135269462dcdcfd9dbcbe5a26f004739"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:15a17f401787da285f17e12f6e5f9587430aa5c22a6dc86329f7c7c38a2552c1"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:fc756aaa27bb3ce973486682b37b54f557a5371506fe4ed341637312a95a1301"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:ee846ba7566be77fe2e4bf167536d9e54256f0f0d95722cadc21e4deaa7929c6"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:5bea3823d393cba3bdb3bf8208a241976659550109b407fd0a786d510e9796a8"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:60edc2fa5d1bed70641552d73764446c7edf4f102f93b9e757fdbde5ef247912"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:2c13273ec5233fbcd0b5e87e3646cc083bcb1a7515cf753abebb769b2c72c4a3"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:31392aea0bb1aad8d5875ed1b86e0633de0e21c7d80a8b56ee270b9e93dca703"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:36728a0af6cd0fec8cf6a9a108204698748940d0262c899783377a0ac39fb069"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-musllinux_1_2_armv7l.whl", hash = "sha256:c22d14cd415f5c37a93ec8fe54f6240dc6037ff7825cc79a9960b500315c20f3"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:a2fb320742ea7be1c20857200c04626a5a6b2df5c2558a18e55d4b5678016ebf"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:0aadcc4b87dea4baa0fe5fafa62cfc84cd5b6f35e1f0856c745df0f692fec831"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-win32.whl", hash = "sha256:85b9e23849059da2149c002dec30bfdf36b36de14e12dbd58d0adb4eb66e58ba"},
+    {file = "healpix_geo-0.1.2-cp312-cp312-win_amd64.whl", hash = "sha256:d02ffd52ec805daa1254862028408d9d3e1a05ecb6d980001edf53d5ea44b994"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-macosx_10_12_x86_64.whl", hash = "sha256:da1a3f108b9469d248831fdc00a79076476d60b25c047619168571da24077966"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:5572343f42772f28d92651a91fc104d4835efb6847082e5bbe4e358f2c2708fb"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:79d9026a5ca38261eeedc52cda3612d4da9c55823c438ad649e7bb09eb41b83f"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:cb02cb84bf3121699efe91bbdfdf9a3a64e71ead7c4f3a4e3b713de658ea454f"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:57008bd8da82451ad00bc33ce20b960141838f92d39086835254f18444f62522"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:89aa5339a9ecaa3a6d2f0b2a1bdc8469f5d2d2f1472005b1761a30b513fb3884"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:be06e5e0596da5565ce61f1fbc54251b34997fad68402600cb2f5879983a6bc8"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6c9205696ea783e820b63409ad216279ba3a9d53ba7d70a3b5fae231b149d75f"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:136f2931a1250e0f144bcde8c4ab8cd9a132bf2802f3b5126f7916e843a652dd"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-musllinux_1_2_armv7l.whl", hash = "sha256:551aafc698b2e7c12ba0953dd9562650ca43b09d25086695938efbccb1065bc0"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:fe801a9ad56d285e915e45cb697300867a3960eaf17af4924ee7183f6b19c9b7"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:c3d3654a5e395c10f56e09fbe8e0bd45710b0539f6d363b9361bb108c8c97462"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-win32.whl", hash = "sha256:7f256df5b143c4a181536d0625030d04feb0e97790af715d13effa342d561db4"},
+    {file = "healpix_geo-0.1.2-cp313-cp313-win_amd64.whl", hash = "sha256:72502b72ff97e0e850bea9392fd1421e456f801d956e56b309cf873c51c433b6"},
+    {file = "healpix_geo-0.1.2-cp313-cp313t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:0cbb13e3a9558ce2a025520f40326db8d1322ab7874a868d8d3c263f073f3f0f"},
+    {file = "healpix_geo-0.1.2-cp313-cp313t-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:2dbce2cd18ac7473e7c6c451dd726e952430edfaf1c32d31736122e9f5b760d2"},
+    {file = "healpix_geo-0.1.2-cp313-cp313t-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:49b7dce085b31ce8fe7cf3fd6d9e73480f4cd284c900411ecb71417ad1ff128c"},
+    {file = "healpix_geo-0.1.2-cp313-cp313t-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:72bc93cde0b5b9954d2e511ec7d7eaba214834bef6214ee82c2cf7aa7f1da649"},
+    {file = "healpix_geo-0.1.2-cp313-cp313t-musllinux_1_2_aarch64.whl", hash = "sha256:2341a27ab8b8a669b96ead0977b10f40cf24eba65274aa9703680074a7c85e7d"},
+    {file = "healpix_geo-0.1.2-cp313-cp313t-musllinux_1_2_armv7l.whl", hash = "sha256:1324c8546d0f9994f3819c76f6a90f56f91d3c0fffb5cbd5ebed5acfaeda2475"},
+    {file = "healpix_geo-0.1.2-cp313-cp313t-musllinux_1_2_i686.whl", hash = "sha256:26c882002cf1b709b62e15e8e90e48ea1a18dcaebd32485748636b7ed77adda1"},
+    {file = "healpix_geo-0.1.2-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:8d4a772efd7bb6af2558eae98eb8ae3f06422a04e170e10e7a5345b4724b0fea"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-macosx_10_12_x86_64.whl", hash = "sha256:40cc6ebaf4c3cc36859aeced076f2141f616ea298d0acba73d1c602e3bbbd1ea"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:5fec7d2d8c0cf8bc5cb94be3135ea37c3b4ebdf4b455bb42c269eaf576fabea6"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9da1334f945ff7a89fe82402c6c667d0b97a9eb3175dd89a734a5296d9c4e9c4"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:c5c8270f627f5bf6947ff15701cd8272f3bff8f90e47aee7c1a2b5f562031e1b"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:d05eec85c2f3989294160646e534cc6e11da2709747fceadcfe35f9179084005"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:03c8f4010f5fa97e08649f54112c51d1b512f28244bc45b67d27ac17948ca150"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:2842f203ea1a43c50bf42628dbb2014b384a28bdf0314c343dc848eb5143376a"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f9c486031e35d74ba34efb3cacfc6fea685bf14762e07ffa907a4b62c74f9a58"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:b42fe17753d7d8634f933e6312eb20baad93197dd3f1550a3305acac988846be"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-musllinux_1_2_armv7l.whl", hash = "sha256:61f184cf9a7f47361cafdda8bf162db6680751cb56494a35168bbe5e7ee7adf1"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-musllinux_1_2_i686.whl", hash = "sha256:dbeecd84fef0638a85f46ca68164ddb08d65cfd8149df2fc87afa7f3f9f0da6e"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:93b240e48e419c9083c74ec1d84dcf1ab00d87494b7c4f79e50fc06c2314eb9d"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-win32.whl", hash = "sha256:2f54060ebdec0ffa6f376831193596e41bb002d82caff49d2c1eb621dae7e162"},
+    {file = "healpix_geo-0.1.2-cp314-cp314-win_amd64.whl", hash = "sha256:a50292f19b51a239e2da968754d781bb73bca7a47a86c128a275ff855397d250"},
+    {file = "healpix_geo-0.1.2-cp314-cp314t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:53b1ca0e24c0afff2b493e4f8c23dfd62fb642c591d39b0a4bbb8d5d08575905"},
+    {file = "healpix_geo-0.1.2-cp314-cp314t-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:ad24172788ffcc2d697f25deb27db390a494a04c14010507aa59a8834e2ee2e4"},
+    {file = "healpix_geo-0.1.2-cp314-cp314t-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:7e1bdbc67d9c0d744363060d558bd32dbc68050409dca50874ee7729b3d3e3cf"},
+    {file = "healpix_geo-0.1.2-cp314-cp314t-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:82b792318945368c5f80628391b15ce0a94a3aca39acd4e7b899d43e93e6aa16"},
+    {file = "healpix_geo-0.1.2-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:c226de68ac2f38ea76edf00459d8219bbe2866a13e8f2f90698a15b7d6b868de"},
+    {file = "healpix_geo-0.1.2-cp314-cp314t-musllinux_1_2_armv7l.whl", hash = "sha256:283f3135de5bfe0599424a0c38406731f584d93ba490a8e6c9274ae3ae0e66d2"},
+    {file = "healpix_geo-0.1.2-cp314-cp314t-musllinux_1_2_i686.whl", hash = "sha256:9dd26cc60d432c1f4a9bd72d011af46bdf56e4d8ef8d7e1a01c199aa845abdef"},
+    {file = "healpix_geo-0.1.2-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:3d43b1b2816f8e489a68f6b0f10e11a72da11e07977a501315e5717727016e43"},
+    {file = "healpix_geo-0.1.2-pp311-pypy311_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ac6acfde98edfb5c1e96853975d15377a24984b70f5f032e944809e65c3304c8"},
+    {file = "healpix_geo-0.1.2-pp311-pypy311_pp73-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:74c9ee93e0a3a0aa33b084bd96905b6eff3e221bc1f6a09c8e2926ee634d9f98"},
+    {file = "healpix_geo-0.1.2-pp311-pypy311_pp73-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:93e59606fbbd546ba830ca7a6b6a59e8edf7c5fbe043b6c717416b7507a837d7"},
+    {file = "healpix_geo-0.1.2-pp311-pypy311_pp73-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:3d1636dcf7707981b356efa13837265f006cda93dfb0a386e4c6c39a0f1d7cab"},
+    {file = "healpix_geo-0.1.2-pp311-pypy311_pp73-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:1ae66e91bb7f61cb1a6d6aeaac871229f7e5ab373a0df73ce78e7a0bf4cc6307"},
+    {file = "healpix_geo-0.1.2-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2f8f6b2893ddb79c9fdb0237766503cc483793be4442ff02ea4512818a67ca9d"},
+    {file = "healpix_geo-0.1.2-pp311-pypy311_pp73-musllinux_1_2_aarch64.whl", hash = "sha256:06a026a7543a1c1a81cf7e1551c5ac78602c85e0f48e555bdcb25432756e192e"},
+    {file = "healpix_geo-0.1.2-pp311-pypy311_pp73-musllinux_1_2_armv7l.whl", hash = "sha256:13a2c7d101c98c795ff0c4a8cb5eb1f728ea0b9d772b772f6a20c53cce8c78fa"},
+    {file = "healpix_geo-0.1.2-pp311-pypy311_pp73-musllinux_1_2_i686.whl", hash = "sha256:ac197e6ef164f9c04a69de1bc0642a5781bd031bc20300bb13191a07903442aa"},
+    {file = "healpix_geo-0.1.2-pp311-pypy311_pp73-musllinux_1_2_x86_64.whl", hash = "sha256:ae8ecd23bae823b05abf3ad53d9c34c94207c25a6bb6e712978fdbbc847dcecc"},
 ]
 
 [package.dependencies]
-numpy = "*"
+numpy = ">=2.0"
 
 [package.extras]
-test = ["pytest"]
+geometries = ["shapely (>=2)"]
 
 [[package]]
 name = "identify"
@@ -4401,4 +4466,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "fe96c535ccf011a156324d05f7c325e2f7f6562313a85b28b778c9618714c5a0"
+content-hash = "f6e43e54a0265e0bc2fa56d5df4c4a66fd05c95b13a16ad37c44d2c85184759c"
