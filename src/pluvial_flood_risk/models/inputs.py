@@ -225,6 +225,36 @@ class OutputParams(BaseModel):
             "values. Set to null to disable rounding."
         ),
     )
+    # (HEALPix parameters moved to a dedicated `HealpixParams` model)
+
+
+class HealpixParams(BaseModel):
+    """Parameters controlling HEALPix aggregation of building-level results."""
+
+    depth: int = Field(
+        default=15,
+        ge=1,
+        le=29,
+        description=(
+            "HEALPix depth (nside = 2^depth). Higher values produce finer cells."
+        ),
+    )
+    agg_func: str = Field(
+        default="mean",
+        description=("Aggregation function applied to risk columns ('mean','max','sum','median')."),
+    )
+    min_buildings: int = Field(
+        default=3,
+        ge=1,
+        description=("Minimum number of buildings per HEALPix cell required for inclusion."),
+    )
+    columns: list[str] | None = Field(
+        default=None,
+        description=(
+            "Explicit list of columns to aggregate. Omit (None) to auto-detect available risk/hazard columns."
+        ),
+    )
+
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +277,7 @@ class PipelineParams(BaseModel):
     hazard: HazardParams = Field(default_factory=HazardParams)
     risk_weights: RiskWeights = Field(default_factory=RiskWeights)
     output: OutputParams = Field(default_factory=OutputParams)
+    healpix_params: HealpixParams = Field(default_factory=HealpixParams)
     n_classification_iterations: int = Field(
         default=4,
         ge=1,
