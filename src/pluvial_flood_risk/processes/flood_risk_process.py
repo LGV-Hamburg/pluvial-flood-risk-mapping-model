@@ -36,7 +36,10 @@ from fastprocesses.processes.process_registry import register_process
 from pydantic import BaseModel
 from referencing import Registry, Resource
 
-from ..algorithms.classification import run_classification_pipeline
+from ..algorithms.classification import (
+    ClassificationResult,
+    run_classification_pipeline,
+)
 from ..algorithms.exposure import run_exposure_pipeline
 from ..algorithms.hazard_ma import run_hazard_ma_pipeline
 from ..algorithms.hazard_wb import run_hazard_wb_pipeline
@@ -1189,7 +1192,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         # Ensure index is string dtype for consistent lookups
         merged_df.index = merged_df.index.astype(str)
         risk_df = run_risk_pipeline(merged_df, params.risk_weights)
-        classified = run_classification_pipeline(
+        classified: ClassificationResult = run_classification_pipeline(
             risk_df,
             params.n_classification_iterations,
         )
@@ -1303,7 +1306,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     def _build_enriched_features_and_bld_gdf(
         self,
         source_features: list[dict],
-        classified,
+        classified: ClassificationResult,
         params: PipelineParams,
         output_columns: list[str],
         candidate_cols: list[str],
@@ -1372,7 +1375,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         self,
         inputs: dict,
         buildings_gdf: gpd.GeoDataFrame | None,
-        classified,
+        classified: ClassificationResult,
         params: PipelineParams,
         candidate_cols: list[str],
     ) -> dict | None:
