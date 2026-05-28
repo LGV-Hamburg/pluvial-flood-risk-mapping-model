@@ -1268,11 +1268,11 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         if params.healpix_params.depth > 0:
             try:
                 # Build a GeoDataFrame from source features and attach numeric columns
-                blds = self._convert_geojson_to_gdf(source_features, params.target_crs)
-                if "id" in blds.columns:
-                    blds = blds.set_index("id")
+                source_buildings_df = self._convert_geojson_to_gdf(source_features, params.target_crs)
+                if "id" in source_buildings_df.columns:
+                    source_buildings_df = source_buildings_df.set_index("id")
                 # Ensure string index for lookup against classified.data
-                blds.index = blds.index.astype(str)
+                source_buildings_df.index = source_buildings_df.index.astype(str)
 
                 # Copy numerical columns from classified.data (align by id)
                 classified_df = classified.data.copy()
@@ -1280,13 +1280,13 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 for col in candidate_cols:
                     if col in classified_df.columns:
                         # reindex will introduce NaN for missing rows
-                        blds[col] = classified_df[col].reindex(blds.index).values
+                        source_buildings_df[col] = classified_df[col].reindex(source_buildings_df.index).values
 
                 # Lazy import of aggregation helper
                 from ..algorithms.aggregations import aggregate_to_healpix
 
                 healpix_gdf = aggregate_to_healpix(
-                    blds,
+                    source_buildings_df,
                     depth=params.healpix_params.depth,
                     risk_columns=params.healpix_params.columns,
                     agg_func=params.healpix_params.agg_func,
