@@ -1211,19 +1211,127 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             RISK_CLASS_MOBILITY_ACCESSIBILITY,
         ]
 
-        enriched_features: list[dict] = []
+        # Decide which outputs the client requested (OGC API Processes)
+        want_risk_buildings = self._is_output_requested(exec_body, "risk_buildings")
+        want_class_breaks_wb = self._is_output_requested(exec_body, "classification_breaks_wb")
+        want_class_breaks_ma = self._is_output_requested(exec_body, "classification_breaks_ma")
+        want_healpix = self._is_output_requested(exec_body, "healpix_aggregation")
+        want_stat_units = self._is_output_requested(exec_body, "risk_statistical_units")
+
+        # Candidate columns for aggregation (used by HEALPix and unit aggregation)
+        candidate_cols = self._candidate_agg_columns()
+
+        # Lazily build enriched features / buildings GeoDataFrame if any dependent
+        # outputs are requested (risk_buildings, HEALPix or statistical units).
+        enriched_features = None
+        source_buildings_gdf = None
+        if want_risk_buildings or want_healpix or want_stat_units:
+            enriched_features, source_buildings_gdf = self._build_enriched_features_and_bld_gdf(
+                source_features, classified, params, output_columns, candidate_cols
+            )
+
+        risk_buildings = {"type": "FeatureCollection", "features": enriched_features or []} if want_risk_buildings else None
+
+        # HEALPix aggregation (only when requested)
+        healpix_agg_json = self._compute_healpix_aggregation(source_buildings_gdf, params) if want_healpix else None
+
+        # Statistical unit aggregation (only when requested)
+        stat_units_json = None
+        if want_stat_units:
+            stat_units_json = self._compute_statistical_unit_aggregation(inputs, source_buildings_gdf, classified, params, candidate_cols)
+
+        # Classification breaks (only when requested)
+        classification_breaks_wb = (
+            [
+                cast(
+                    float,
+                    self._serialize_output_value(value, params.output.decimal_precision),
+                )
+                for value in classified.breaks_well_being
+            ]
+            if want_class_breaks_wb
+            else None
+        )
+        classification_breaks_ma = (
+            [
+                cast(
+                    float,
+                    self._serialize_output_value(value, params.output.decimal_precision),
+                )
+                for value in classified.breaks_mobility_accessibility
+            ]
+            if want_class_breaks_ma
+            else None
+        )
+
+        return PfRiskResult(
+            risk_buildings=risk_buildings,
+            classification_breaks_wb=classification_breaks_wb,
+            classification_breaks_ma=classification_breaks_ma,
+            healpix_aggregation=healpix_agg_json,
+            risk_statistical_units=stat_units_json,
+            validation_report=None,
+        )
+
+    # ------------------------- Refactor helpers -------------------------
+    def _is_output_requested(self, exec_body: dict, name: str) -> bool:
+        """Return True when the given output should be produced by this run.
+
+        Follows OGC behaviour: if no `outputs` object is present in the
+        execution body, all outputs are produced by default.
+        """
+        outputs = exec_body.get("outputs")
+        if not outputs:
+            return True
+        if isinstance(outputs, dict):
+            return name in outputs
+        return True
+
+    def _candidate_agg_columns(self) -> list:
+        """List of candidate columns used for aggregations."""
+        return [
+            PLUVIAL_FLOOD_RISK_WELL_BEING,
+            PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
+            HAZARD_WELL_BEING,
+            HAZARD_MOBILITY_ACCESSIBILITY,
+            SENSITIVITY_INDEX,
+            COPING_CAPACITY_INDEX,
+            SOCIAL_VULNERABILITY_INDEX,
+            SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
+        ]
+
+    def _build_enriched_features_and_bld_gdf(
+        self,
+        source_features: list[dict],
+        classified,
+        params: PipelineParams,
+        output_columns: list[str],
+        candidate_cols: list[str],
+    ) -> tuple[list[dict], gpd.GeoDataFrame]:
+        """Return (enriched_features, buildings_gdf) for downstream outputs.
+
+        Attaches numeric columns from `classified.data` to the GeoDataFrame
+        and serialises the building features according to `params.output`.
+        """
+        blds = self._convert_geojson_to_gdf(source_features, params.target_crs)
+        if "id" in blds.columns:
+            blds = blds.set_index("id")
+        blds.index = blds.index.astype(str)
+
+        classified_df = classified.data.copy()
+        classified_df.index = classified_df.index.astype(str)
+        for col in candidate_cols:
+            if col in classified_df.columns:
+                blds[col] = classified_df[col].reindex(blds.index).values
+
+        enriched_features = []
         for feature in source_features:
             feature_id = feature.get("id") or feature.get("properties", {}).get("id")
             if feature_id is None:
-                raise ValueError(
-                    "Each building feature must provide an id either at the feature "
-                    "top level or in properties.id."
-                )
+                raise ValueError("Each building feature must provide an id either at the feature top level or in properties.id.")
             building_id = str(feature_id)
             if building_id not in classified.data.index:
-                raise ValueError(
-                    f"Missing merged results for building id {building_id!r}."
-                )
+                raise ValueError(f"Missing merged results for building id {building_id!r}.")
             source_properties = feature.get("properties", {})
             if params.output.include_input_building_properties:
                 properties = {
@@ -1235,134 +1343,80 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 properties = {}
             row = classified.data.loc[building_id]
             for column in output_columns:
-                properties[column] = self._serialize_output_value(
-                    row[column],
-                    params.output.decimal_precision,
-                )
-            enriched_features.append(
-                {
-                    **feature,
-                    "properties": properties,
-                }
-            )
+                properties[column] = self._serialize_output_value(row[column], params.output.decimal_precision)
+            enriched_features.append({**feature, "properties": properties})
 
-        risk_buildings = {
-            "type": "FeatureCollection",
-            "features": enriched_features,
-        }
+        return enriched_features, blds
 
-        # Candidate columns for aggregation (used by HEALPix and unit aggregation)
-        candidate_cols = [
-            PLUVIAL_FLOOD_RISK_WELL_BEING,
-            PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
-            HAZARD_WELL_BEING,
-            HAZARD_MOBILITY_ACCESSIBILITY,
-            SENSITIVITY_INDEX,
-            COPING_CAPACITY_INDEX,
-            SOCIAL_VULNERABILITY_INDEX,
-            SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
-        ]
+    def _compute_healpix_aggregation(self, buildings_gdf: gpd.GeoDataFrame | None, params: PipelineParams) -> dict | None:
+        """Compute HEALPix aggregation as GeoJSON dict or return None on failure."""
+        if buildings_gdf is None:
+            return None
+        try:
+            from ..algorithms.aggregations import aggregate_to_healpix
 
-        # Optional aggregated outputs
-        healpix_agg_json = None
-        if params.healpix_params.depth > 0:
-            try:
-                # Build a GeoDataFrame from source features and attach numeric columns
-                source_buildings_df = self._convert_geojson_to_gdf(source_features, params.target_crs)
-                if "id" in source_buildings_df.columns:
-                    source_buildings_df = source_buildings_df.set_index("id")
-                # Ensure string index for lookup against classified.data
-                source_buildings_df.index = source_buildings_df.index.astype(str)
-
-                # Copy numerical columns from classified.data (align by id)
-                classified_df = classified.data.copy()
-                classified_df.index = classified_df.index.astype(str)
-                for col in candidate_cols:
-                    if col in classified_df.columns:
-                        # reindex will introduce NaN for missing rows
-                        source_buildings_df[col] = classified_df[col].reindex(source_buildings_df.index).values
-
-                # Lazy import of aggregation helper
-                from ..algorithms.aggregations import aggregate_to_healpix
-
+            if getattr(params, "healpix_params", None) and params.healpix_params.depth > 0:
                 healpix_gdf = aggregate_to_healpix(
-                    source_buildings_df,
+                    buildings_gdf,
                     depth=params.healpix_params.depth,
                     risk_columns=params.healpix_params.columns,
                     agg_func=params.healpix_params.agg_func,
                     min_buildings=params.healpix_params.min_buildings,
                 )
-                healpix_agg_json = json.loads(healpix_gdf.to_json())
-            except Exception:
-                healpix_agg_json = None
+                return json.loads(healpix_gdf.to_json())
+        except Exception:
+            return None
+        return None
 
-        # Optional: aggregate results to statistical units when provided
-        stat_units_json = None
-        if "statistical_units" in inputs:
-            try:
-                stat_fc = inputs["statistical_units"]
-                stat_gdf = self._convert_geojson_to_gdf(stat_fc["features"], params.target_crs)
+    def _compute_statistical_unit_aggregation(
+        self,
+        inputs: dict,
+        buildings_gdf: gpd.GeoDataFrame | None,
+        classified,
+        params: PipelineParams,
+        candidate_cols: list[str],
+    ) -> dict | None:
+        """Aggregate building indicators to statistical units and return GeoJSON dict."""
+        if "statistical_units" not in inputs:
+            raise ValueError("Requested output 'risk_statistical_units' requires 'statistical_units' input")
+        try:
+            stat_fc = inputs["statistical_units"]
+            stat_gdf = self._convert_geojson_to_gdf(stat_fc["features"], params.target_crs)
 
-                # Prepare building values for join
-                bld_for_join = self._convert_geojson_to_gdf(source_features, params.target_crs)
+            bld_for_join = buildings_gdf
+            if bld_for_join is None:
+                bld_for_join = self._convert_geojson_to_gdf(inputs["buildings"]["features"], params.target_crs)
                 if "id" in bld_for_join.columns:
                     bld_for_join = bld_for_join.set_index("id")
                 bld_for_join.index = bld_for_join.index.astype(str)
-
-                # Attach numeric columns from classified.data where present
+                classified_df = classified.data.copy(); classified_df.index = classified_df.index.astype(str)
                 for col in candidate_cols:
-                    if col in classified.data.columns:
-                        bld_for_join[col] = classified.data[col].reindex(bld_for_join.index).values
+                    if col in classified_df.columns:
+                        bld_for_join[col] = classified_df[col].reindex(bld_for_join.index).values
 
-                available_agg = [c for c in candidate_cols if c in bld_for_join.columns]
-                if len(bld_for_join) > 0 and len(stat_gdf) > 0 and available_agg:
-                    try:
-                        joined = gpd.sjoin(
-                            bld_for_join[ ["geometry"] + available_agg ],
-                            stat_gdf[["geometry"]],
-                            how="inner",
-                            predicate="intersects",
-                        )
-                        for col in available_agg:
-                            agg = joined.groupby("index_right")[col].mean()
-                            stat_gdf[col] = stat_gdf.index.map(agg).fillna(0)
-                    except Exception:
-                        # Fallback: per-unit intersection loop (slower)
-                        for idx, unit in stat_gdf.iterrows():
-                            if unit.geometry is None or pd.isna(unit.geometry):
-                                for col in available_agg:
-                                    stat_gdf.at[idx, col] = 0
-                                continue
-                            in_unit = bld_for_join[ bld_for_join.geometry.intersects(unit.geometry) ]
+            available_agg = [c for c in candidate_cols if c in bld_for_join.columns]
+            if len(bld_for_join) > 0 and len(stat_gdf) > 0 and available_agg:
+                try:
+                    joined = gpd.sjoin(
+                        bld_for_join[["geometry"] + available_agg],
+                        stat_gdf[["geometry"]],
+                        how="inner",
+                        predicate="intersects",
+                    )
+                    for col in available_agg:
+                        agg = joined.groupby("index_right")[col].mean()
+                        stat_gdf[col] = stat_gdf.index.map(agg).fillna(0)
+                except Exception:
+                    # Fallback: per-unit intersection loop (slower)
+                    for idx, unit in stat_gdf.iterrows():
+                        if unit.geometry is None or pd.isna(unit.geometry):
                             for col in available_agg:
-                                stat_gdf.at[idx, col] = in_unit[col].mean() if len(in_unit) > 0 else 0
-                    stat_units_json = json.loads(stat_gdf.to_json())
-            except Exception:
-                stat_units_json = None
-
-        return PfRiskResult(
-            risk_buildings=risk_buildings,
-            classification_breaks_wb=[
-                cast(
-                    float,
-                    self._serialize_output_value(
-                        value,
-                        params.output.decimal_precision,
-                    ),
-                )
-                for value in classified.breaks_well_being
-            ],
-            classification_breaks_ma=[
-                cast(
-                    float,
-                    self._serialize_output_value(
-                        value,
-                        params.output.decimal_precision,
-                    ),
-                )
-                for value in classified.breaks_mobility_accessibility
-            ],
-            healpix_aggregation=healpix_agg_json,
-            risk_statistical_units=stat_units_json,
-            validation_report=None,
-        )
+                                stat_gdf.at[idx, col] = 0
+                            continue
+                        in_unit = bld_for_join[bld_for_join.geometry.intersects(unit.geometry)]
+                        for col in available_agg:
+                            stat_gdf.at[idx, col] = in_unit[col].mean() if len(in_unit) > 0 else 0
+                return json.loads(stat_gdf.to_json())
+        except Exception:
+            return None
+        return None
