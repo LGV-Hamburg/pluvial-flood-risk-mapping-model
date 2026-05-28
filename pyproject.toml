@@ -31,7 +31,8 @@ dependencies = [
     "numpy (>=2.4.3,<3.0.0)",
     "scipy (>=1.17.1,<2.0.0)",
     "pandas (>=3.0.1,<4.0.0)",
-    "geopandas (>=1.1.3,<2.0.0)"
+    "geopandas (>=1.1.3,<2.0.0)",
+    "healpix (>=2025.1,<2026.0)"
 ]
 
 [project.urls]
