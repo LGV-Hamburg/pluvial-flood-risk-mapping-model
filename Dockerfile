@@ -56,7 +56,7 @@ COPY --from=base \
     --chown=$USERNAME:$USERNAME \
     ${VIRTUAL_ENV} ./.venv
 
-COPY --chown=$USERNAME:$USER_GID app.py ./
+COPY --chown=$USERNAME:$USER_GID app.py pluvial_flood_risk_process_description.yaml ./
 
 COPY --chown=$USERNAME:$USER_GID schemas /app/schemas
 
