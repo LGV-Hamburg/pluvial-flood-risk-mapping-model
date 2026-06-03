@@ -240,7 +240,7 @@ inputs:
               description: Number of head/tail break iterations for risk classification
         target_crs:
           type: string
-          default: null
+          default: "null"
           examples:
             - EPSG:25832
             - http://www.opengis.net/def/crs/EPSG/0/25832
@@ -287,7 +287,7 @@ inputs:
               type: array
               items:
                 type: string
-              default: null
+              default: "null"
               description: >-
                 Explicit list of columns to aggregate. Omit to use all available
                 risk/hazard columns (PFRWB, PFRMA, HWB, HMA,
@@ -305,7 +305,7 @@ inputs:
               anyOf:
                 - type: integer
                   minimum: 0
-                - type: null
+                - type: "null"
               minimum: 0
               default: 4
               description: >-
