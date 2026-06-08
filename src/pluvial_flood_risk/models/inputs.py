@@ -7,9 +7,8 @@ the paper.
 
 from __future__ import annotations
 
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pyproj import CRS
-from pydantic import BaseModel, Field, model_validator
-from pydantic import field_validator
 
 # ---------------------------------------------------------------------------
 # Vulnerability (Steps 1.1-1.4)
@@ -132,22 +131,31 @@ class HazardParams(BaseModel):
     buffer_building_m: float = Field(
         default=2.0,
         gt=0.0,
-        description="Buffer radius [m] around building footprint for the well-being hazard (Step 4.1).",
+        description=(
+            "Buffer radius [m] around building footprint "
+            "for the well-being hazard (Step 4.1)."
+        ),
     )
     buffer_zone1_m: float = Field(
         default=5.0,
         gt=0.0,
-        description="Inner buffer radius [m] around building for mobility hazard (Step 3.1).",
+        description=(
+            "Inner buffer radius [m] around building for mobility hazard (Step 3.1)."
+        ),
     )
     buffer_zone2_m: float = Field(
         default=15.0,
         gt=0.0,
-        description="Street buffer radius [m] for the near-access zone (Step 3.1).",
+        description=(
+            "Street buffer radius [m] for the near-access zone (Step 3.1)."
+        ),
     )
     buffer_zone3_m: float = Field(
         default=30.0,
         gt=0.0,
-        description="Street buffer outer radius [m] for the extended-access zone (Step 3.1).",
+        description=(
+            "Street buffer outer radius [m] for the extended-access zone (Step 3.1)."
+        ),
     )
     min_street_flood_area_m2: float = Field(
         default=4.0,
