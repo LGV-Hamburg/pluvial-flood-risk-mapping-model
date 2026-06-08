@@ -292,3 +292,45 @@ class PipelineParams(BaseModel):
         except Exception as exc:
             raise ValueError(f"Invalid target_crs identifier: {value!r}") from exc
         return value
+
+
+# ---------------------------------------------------------------------------
+# Process-level input wrapper
+# ---------------------------------------------------------------------------
+
+
+class ProcessInputs(BaseModel):
+    """Typed wrapper for the OGC exec_body inputs dict.
+
+    Provides structured, validated access to the four spatial inputs and the
+    optional params object.  All spatial layers are kept as raw GeoJSON dicts
+    because their geometry is handled by geopandas; JSON Schema validation of
+    their contents is performed by the fastprocesses framework before this
+    model is constructed.
+    """
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    buildings: dict
+    streets: dict
+    flood_layers: dict
+    statistical_units: dict | None = None
+    params: PipelineParams = Field(default_factory=PipelineParams)
+
+    @classmethod
+    def from_exec_body(cls, exec_body: dict) -> "ProcessInputs":
+        """Parse exec_body['inputs'] into a typed ProcessInputs instance.
+
+        Any params key absent from the user payload falls back to the
+        ``PipelineParams`` default (Pydantic fills it in automatically).
+        """
+        raw: dict = exec_body["inputs"]
+        return cls.model_validate(
+            {
+                "buildings": raw["buildings"],
+                "streets": raw["streets"],
+                "flood_layers": raw["flood_layers"],
+                "statistical_units": raw.get("statistical_units"),
+                "params": raw.get("params") or {},
+            }
+        )

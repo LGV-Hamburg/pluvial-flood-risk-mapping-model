@@ -69,7 +69,7 @@ from ..models.field_names import (
     SOCIAL_WELFARE_RECIPIENTS,
     STATISTICAL_UNIT_ID,
 )
-from ..models.inputs import PipelineParams
+from ..models.inputs import ProcessInputs
 from ..spatial_utils import join_statistical_unit_attributes
 
 _INPUT_BUILDING_OUTPUT_COLUMNS = [
@@ -325,131 +325,180 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 description=(
                     "JSON object for overriding algorithm defaults. "
                     "All fields are optional; omitting this input applies the "
-                    "paper-derived defaults (Vogelbacher et al., 2025)."
+                    "paper-derived defaults (Vogelbacher et al., 2025). "
+                    "Structure mirrors PipelineParams: top-level keys are "
+                    "'vulnerability', 'hazard', 'risk_weights', 'output', "
+                    "'n_classification_iterations', and 'target_crs'."
                 ),
-                schema=Schema(
-                    type="object",
-                    properties={
-                        "vulnerability_weights": Schema.model_validate(
-                            {
+                schema=Schema.model_validate(
+                    {
+                        "type": "object",
+                        "properties": {
+                            "vulnerability": {
                                 "type": "object",
                                 "properties": {
-                                    "children_under_10": {
-                                        "type": "number",
-                                        "minimum": 0.0,
-                                        "maximum": 1.0,
-                                        "default": 0.3,
-                                    },
-                                    "elderly_singles_over_65": {
-                                        "type": "number",
-                                        "minimum": 0.0,
-                                        "maximum": 1.0,
-                                        "default": 0.7,
-                                    },
-                                    "single_parents": {
-                                        "type": "number",
-                                        "minimum": 0.0,
-                                        "maximum": 1.0,
-                                        "default": 0.0,
+                                    "sensitivity_weights": {
+                                        "type": "object",
                                         "description": (
-                                            "Sensitivity weight for single-parent "
-                                            "households. Default 0 excludes this "
-                                            "indicator. Set > 0 and adjust other "
-                                            "sensitivity weights to sum to 1.0."
+                                            "TOPSIS weights for sensitivity indicators "
+                                            "(Step 1.1). Must sum to 1.0."
                                         ),
+                                        "properties": {
+                                            "children_under_10": {
+                                                "type": "number",
+                                                "minimum": 0.0,
+                                                "maximum": 1.0,
+                                                "default": 0.3,
+                                            },
+                                            "elderly_singles_over_65": {
+                                                "type": "number",
+                                                "minimum": 0.0,
+                                                "maximum": 1.0,
+                                                "default": 0.7,
+                                            },
+                                            "single_parents": {
+                                                "type": "number",
+                                                "minimum": 0.0,
+                                                "maximum": 1.0,
+                                                "default": 0.0,
+                                                "description": (
+                                                    "Optional sensitivity weight for "
+                                                    "single-parent households. Default "
+                                                    "0 excludes this indicator. Set > 0 "
+                                                    "and adjust other weights to sum to "
+                                                    "1.0."
+                                                ),
+                                            },
+                                        },
                                     },
-                                    "social_welfare_recipients": {
-                                        "type": "number",
-                                        "minimum": 0.0,
-                                        "maximum": 1.0,
-                                        "default": 0.5,
+                                    "coping_capacity_weights": {
+                                        "type": "object",
+                                        "description": (
+                                            "TOPSIS weights for coping-capacity "
+                                            "indicators (Step 1.2). Must sum to 1.0."
+                                        ),
+                                        "properties": {
+                                            "social_welfare_recipients": {
+                                                "type": "number",
+                                                "minimum": 0.0,
+                                                "maximum": 1.0,
+                                                "default": 0.5,
+                                            },
+                                            "no_highschool_diploma": {
+                                                "type": "number",
+                                                "minimum": 0.0,
+                                                "maximum": 1.0,
+                                                "default": 0.5,
+                                            },
+                                        },
                                     },
-                                    "no_highschool_diploma": {
-                                        "type": "number",
-                                        "minimum": 0.0,
-                                        "maximum": 1.0,
-                                        "default": 0.5,
-                                    },
-                                    "sensitivity": {
-                                        "type": "number",
-                                        "minimum": 0.0,
-                                        "maximum": 1.0,
-                                        "default": 0.5,
-                                    },
-                                    "coping_capacity": {
-                                        "type": "number",
-                                        "minimum": 0.0,
-                                        "maximum": 1.0,
-                                        "default": 0.5,
+                                    "svi_weights": {
+                                        "type": "object",
+                                        "description": (
+                                            "TOPSIS weights for the SVI aggregation "
+                                            "step (Step 1.3). Must sum to 1.0."
+                                        ),
+                                        "properties": {
+                                            "sensitivity": {
+                                                "type": "number",
+                                                "minimum": 0.0,
+                                                "maximum": 1.0,
+                                                "default": 0.5,
+                                            },
+                                            "coping_capacity": {
+                                                "type": "number",
+                                                "minimum": 0.0,
+                                                "maximum": 1.0,
+                                                "default": 0.5,
+                                            },
+                                        },
                                     },
                                     "apply_entropy": {
                                         "type": "boolean",
                                         "default": True,
-                                        "description": "Apply Shannon entropy weighting to TOPSIS scores",
+                                        "description": (
+                                            "Multiply TOPSIS closeness by the Shannon "
+                                            "entropy index U_i (Eq. 6). Accounts for "
+                                            "heterogeneity of indicator values."
+                                        ),
                                     },
-                                },
-                            }
-                        ),
-                        "flood_sensitivity_params": Schema.model_validate(
-                            {
-                                "type": "object",
-                                "properties": {
                                     "threshold_fraction": {
                                         "type": "number",
                                         "minimum": 0.0,
                                         "maximum": 1.0,
                                         "default": 0.25,
-                                        "description": "Fraction of mean SVI added as floor value (Eq. 7)",
+                                        "description": (
+                                            "Fraction of mean(SVI) added as floor "
+                                            "before the power transform (Eq. 7)."
+                                        ),
                                     },
                                     "exponent": {
-                                        "type": "integer",
-                                        "minimum": 1,
-                                        "default": 2,
-                                        "maximum": 3,
-                                        "description": "Power applied to shifted SVI (Eq. 7)",
+                                        "type": "number",
+                                        "minimum": 0.0,
+                                        "default": 2.0,
+                                        "description": (
+                                            "Power applied in the flood sensitivity "
+                                            "transform (Eq. 7)."
+                                        ),
                                     },
                                 },
-                            }
-                        ),
-                        "hazard_params": Schema.model_validate(
-                            {
+                            },
+                            "hazard": {
                                 "type": "object",
                                 "properties": {
                                     "buffer_building_m": {
                                         "type": "number",
                                         "minimum": 0.0,
                                         "default": 2.0,
-                                        "description": "Buffer radius around buildings for HWB [m]",
+                                        "description": (
+                                            "Buffer radius around buildings for "
+                                            "HWB [m] (Step 4.1)."
+                                        ),
                                     },
-                                    "buffer_street_inner_m": {
-                                        "type": "number",
-                                        "minimum": 0.0,
-                                        "default": 15.0,
-                                        "description": "Inner street buffer radius for HMA [m]",
-                                    },
-                                    "buffer_street_outer_m": {
-                                        "type": "number",
-                                        "minimum": 0.0,
-                                        "default": 30.0,
-                                        "description": "Outer street buffer radius for HMA [m]",
-                                    },
-                                    "buffer_access_m": {
+                                    "buffer_zone1_m": {
                                         "type": "number",
                                         "minimum": 0.0,
                                         "default": 5.0,
-                                        "description": "Direct access buffer radius for HMA [m]",
+                                        "description": (
+                                            "Zone 1 direct-access buffer radius "
+                                            "for HMA [m] (Step 3.1)."
+                                        ),
+                                    },
+                                    "buffer_zone2_m": {
+                                        "type": "number",
+                                        "minimum": 0.0,
+                                        "default": 15.0,
+                                        "description": (
+                                            "Zone 2 near-street buffer radius "
+                                            "for HMA [m] (Step 3.1)."
+                                        ),
+                                    },
+                                    "buffer_zone3_m": {
+                                        "type": "number",
+                                        "minimum": 0.0,
+                                        "default": 30.0,
+                                        "description": (
+                                            "Zone 3 extended-access buffer outer "
+                                            "radius for HMA [m] (Step 3.1)."
+                                        ),
                                     },
                                     "min_street_flood_area_m2": {
                                         "type": "number",
                                         "minimum": 0.0,
                                         "default": 4.0,
-                                        "description": "Minimum flooded street area to include in HMA [m²]",
+                                        "description": (
+                                            "Minimum flooded street area to include "
+                                            "in HMA [m²]."
+                                        ),
                                     },
                                     "lognormal_shape": {
                                         "type": "number",
                                         "minimum": 0.0,
                                         "default": 0.25,
-                                        "description": "Shape parameter σ of the log-normal CDF (Eq. 11)",
+                                        "description": (
+                                            "Shape parameter σ of the log-normal "
+                                            "CDF (Eq. 11). μ fixed at 0."
+                                        ),
                                     },
                                     "ma_flood_level_cm": {
                                         "type": "integer",
@@ -457,66 +506,47 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                                         "maximum": 100,
                                         "multipleOf": 10,
                                         "default": 30,
-                                        "description": "Water depth class [cm] from flood_layers used for the mobility & accessibility hazard (Steps 3.1-3.2)",
+                                        "description": (
+                                            "Water depth class [cm] from flood_layers "
+                                            "used for the mobility & accessibility "
+                                            "hazard (Steps 3.1–3.2)."
+                                        ),
                                     },
                                 },
-                            }
-                        ),
-                        "risk_weights": Schema.model_validate(
-                            {
+                            },
+                            "risk_weights": {
                                 "type": "object",
                                 "properties": {
-                                    "hazard_exponent": {
+                                    "vulnerability_exponent": {
                                         "type": "number",
                                         "minimum": 0.0,
                                         "default": 1.0,
-                                        "description": "Exponent a applied to hazard index (Eq. 14/15)",
+                                        "description": (
+                                            "Exponent a applied to SV_PF "
+                                            "(Eq. 14/15)."
+                                        ),
                                     },
                                     "exposure_exponent": {
                                         "type": "number",
                                         "minimum": 0.0,
                                         "default": 1.0,
-                                        "description": "Exponent b applied to exposure index (Eq. 14/15)",
+                                        "description": (
+                                            "Exponent b applied to E "
+                                            "(Eq. 14/15)."
+                                        ),
                                     },
-                                    "vulnerability_exponent": {
+                                    "hazard_exponent": {
                                         "type": "number",
                                         "minimum": 0.0,
                                         "default": 1.0,
-                                        "description": "Exponent c applied to vulnerability index (Eq. 14/15)",
-                                    },
-                                    "n_classification_iterations": {
-                                        "type": "integer",
-                                        "minimum": 1,
-                                        "default": 4,
-                                        "description": "Number of head/tail break iterations for risk classification",
+                                        "description": (
+                                            "Exponent c applied to H "
+                                            "(Eq. 14/15)."
+                                        ),
                                     },
                                 },
-                            }
-                        ),
-                        "target_crs": Schema.model_validate(
-                            {
-                                "type": "string",
-                                "default": None,
-                                "examples": [
-                                    "EPSG:25832",
-                                    "http://www.opengis.net/def/crs/EPSG/0/25832",
-                                    "urn:ogc:def:crs:EPSG::25832",
-                                    "EPSG:32632",
-                                    "EPSG:2263",
-                                ],
-                                "description": (
-                                    "CRS identifier for all spatial calculations. "
-                                    "Accepted forms include EPSG tokens, OGC CRS URIs, "
-                                    "OGC URNs, and proj strings. Required when inputs "
-                                    "carry projected (metric) coordinates (e.g. "
-                                    "'EPSG:25832' for Hamburg / ETRS89 UTM-32N). Omit "
-                                    "for standard WGS-84 GeoJSON — UTM zone is then "
-                                    "auto-detected from the input data centroid."
-                                ),
-                            }
-                        ),
-                        "output": Schema.model_validate(
-                            {
+                            },
+                            "output": {
                                 "type": "object",
                                 "properties": {
                                     "include_input_building_properties": {
@@ -533,18 +563,44 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                                             {"type": "integer", "minimum": 0},
                                             {"type": "null"},
                                         ],
-                                        "minimum": 0,
                                         "default": 4,
                                         "description": (
-                                            "Number of decimal places used for "
-                                            "serialized floating-point outputs. "
-                                            "Set to null to disable rounding."
+                                            "Number of decimal places for "
+                                            "floating-point outputs. "
+                                            "null disables rounding."
                                         ),
                                     },
                                 },
-                            }
-                        ),
-                    },
+                            },
+                            "n_classification_iterations": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "default": 4,
+                                "description": (
+                                    "Number of head/tail break iterations "
+                                    "for risk classification (Step 6)."
+                                ),
+                            },
+                            "target_crs": {
+                                "type": "string",
+                                "examples": [
+                                    "EPSG:25832",
+                                    "http://www.opengis.net/def/crs/EPSG/0/25832",
+                                    "urn:ogc:def:crs:EPSG::25832",
+                                    "EPSG:32632",
+                                    "EPSG:2263",
+                                ],
+                                "description": (
+                                    "CRS identifier for all spatial calculations. "
+                                    "Accepted forms include EPSG tokens, OGC CRS "
+                                    "URIs, OGC URNs, and proj strings. Required when "
+                                    "inputs carry projected (metric) coordinates. "
+                                    "Omit for standard WGS-84 GeoJSON — UTM zone is "
+                                    "then auto-detected from the input data centroid."
+                                ),
+                            },
+                        },
+                    }
                 ),
                 minOccurs=0,
                 maxOccurs=1,
@@ -698,11 +754,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             social_vulnerability_index, social_vulnerability_flood_potential
             (one value per building, keyed by building id).
         """
-        inputs: dict = exec_body["inputs"]
-        buildings_fc: dict = inputs["buildings"]
-        params = PipelineParams.model_validate(inputs.get("params", {}))
-
-        features: list[dict] = buildings_fc["features"]
+        inp = ProcessInputs.from_exec_body(exec_body)
+        params = inp.params
+        features: list[dict] = inp.buildings["features"]
 
         # Check if vulnerability indicators need to be joined from stat units
         vulnerability_cols = [
@@ -718,15 +772,14 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             col not in sample_props for col in vulnerability_cols
         )
 
-        if indicators_missing and "statistical_units" in inputs:
+        if indicators_missing and inp.statistical_units is not None:
             # Parse as GeoDataFrame to do the spatial/attribute join
             gdf = self._convert_geojson_to_gdf(features, params.target_crs)
             gdf_metric = self._project_crs_to_metric(gdf, params.target_crs)
             gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
 
-            stat_units_fc = inputs["statistical_units"]
             stat_gdf = self._convert_geojson_to_gdf(
-                stat_units_fc["features"], params.target_crs
+                inp.statistical_units["features"], params.target_crs
             )
             gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
 
@@ -762,11 +815,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             residents_ground_floor, exposure_mobility_accessibility
             (one value per building, keyed by building id).
         """
-        inputs: dict = exec_body["inputs"]
-        buildings_fc: dict = inputs["buildings"]
-        params = PipelineParams.model_validate(inputs.get("params", {}))
+        inp = ProcessInputs.from_exec_body(exec_body)
+        params = inp.params
 
-        gdf = self._convert_geojson_to_gdf(buildings_fc["features"], params.target_crs)
+        gdf = self._convert_geojson_to_gdf(
+            inp.buildings["features"], params.target_crs
+        )
         gdf_metric = self._project_crs_to_metric(gdf, params.target_crs)
         gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
 
@@ -778,8 +832,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         # living area must be derived but no unit assignment is available.
         needs_join = residents_missing or (living_area_missing and unit_id_missing)
         if needs_join:
-            stat_units_fc = inputs.get("statistical_units")
-            if stat_units_fc is None:
+            if inp.statistical_units is None:
                 raise ValueError(
                     "The buildings FeatureCollection is missing "
                     "'residents_in_statistical_unit', or cannot derive "
@@ -790,7 +843,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "joining."
                 )
             stat_gdf = self._convert_geojson_to_gdf(
-                stat_units_fc["features"], params.target_crs
+                inp.statistical_units["features"], params.target_crs
             )
             gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
 
@@ -832,20 +885,18 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             dict with key: hazard_well_being
             (one value per building, keyed by building id).
         """
-        inputs: dict = exec_body["inputs"]
-        buildings_fc: dict = inputs["buildings"]
-        flood_layers_fc: dict = inputs["flood_layers"]
-        params = PipelineParams.model_validate(inputs.get("params", {}))
+        inp = ProcessInputs.from_exec_body(exec_body)
+        params = inp.params
 
         buildings_gdf = self._convert_geojson_to_gdf(
-            buildings_fc["features"], params.target_crs
+            inp.buildings["features"], params.target_crs
         )
         buildings_metric = self._project_crs_to_metric(buildings_gdf, params.target_crs)
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
         flood_gdf = self._convert_geojson_to_gdf(
-            flood_layers_fc["features"], params.target_crs
+            inp.flood_layers["features"], params.target_crs
         )
         flood_metric = self._project_crs_to_metric(
             flood_gdf, params.target_crs, buildings_gdf
@@ -873,21 +924,18 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             dict with key: hazard_mobility_accessibility
             (one value per building, keyed by building id).
         """
-        inputs: dict = exec_body["inputs"]
-        buildings_fc: dict = inputs["buildings"]
-        streets_fc: dict = inputs["streets"]
-        flood_layers_fc: dict = inputs["flood_layers"]
-        params = PipelineParams.model_validate(inputs.get("params", {}))
+        inp = ProcessInputs.from_exec_body(exec_body)
+        params = inp.params
 
         buildings_gdf = self._convert_geojson_to_gdf(
-            buildings_fc["features"], params.target_crs
+            inp.buildings["features"], params.target_crs
         )
         buildings_metric = self._project_crs_to_metric(buildings_gdf, params.target_crs)
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
         streets_gdf = self._convert_geojson_to_gdf(
-            streets_fc["features"], params.target_crs
+            inp.streets["features"], params.target_crs
         )
         streets_metric = self._project_crs_to_metric(
             streets_gdf, params.target_crs, buildings_gdf
@@ -897,14 +945,14 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         ma_level = params.hazard.ma_flood_level_cm
         ma_features = [
             f
-            for f in flood_layers_fc["features"]
+            for f in inp.flood_layers["features"]
             if f.get("properties", {}).get("level_cm") == ma_level
         ]
         if not ma_features:
             available = sorted(
                 {
                     f.get("properties", {}).get("level_cm")
-                    for f in flood_layers_fc["features"]
+                    for f in inp.flood_layers["features"]
                 }
             )
             raise ValueError(
@@ -955,9 +1003,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 f"merge_results is missing required step outputs: {missing_steps}"
             )
 
-        inputs: dict = exec_body["inputs"]
-        source_features = inputs["buildings"]["features"]
-        params = PipelineParams.model_validate(inputs.get("params", {}))
+        inp = ProcessInputs.from_exec_body(exec_body)
+        source_features = inp.buildings["features"]
+        params = inp.params
 
         partial_frames: list[pd.DataFrame] = []
         for step_name in required_steps:
