@@ -219,7 +219,7 @@ class OutputParams(BaseModel):
     """Controls for the serialized GeoJSON output payload."""
 
     include_input_building_properties: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Include selected original building input properties in the output "
             "feature properties in addition to computed pipeline outputs."

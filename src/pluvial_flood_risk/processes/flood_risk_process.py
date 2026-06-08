@@ -578,7 +578,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                         "properties": {
                             "include_input_building_properties": {
                                 "type": "boolean",
-                                "default": False,
+                                "default": True,
                                 "description": (
                                     "Include selected original building "
                                     "properties in the output feature "
