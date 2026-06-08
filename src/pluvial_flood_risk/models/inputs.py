@@ -192,11 +192,11 @@ class HazardParams(BaseModel):
 
 
 class RiskWeights(BaseModel):
-    """Exponent weights for the IPCC risk product formula (Step 5, Eq. 14/15).
+    """Exponent weights for the IPCC risk product formula (Step 5, Eq. 14 and 15).
 
-    PFR = SV_PF^a * E^b * H^c
+    PFR = SV_PF^a * E^b * H^c (this is the general formula for both PFR_WB and PFR_MA).
 
-    All default to 1.0 (unweighted product) as in the paper.
+    All default to 1.0 (unweighted product) as in Vogelbacher et al. (2025).
     """
 
     vulnerability_exponent: float = Field(
@@ -299,14 +299,14 @@ class PipelineParams(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ProcessInputs(BaseModel):
+class ProcessInputs(PipelineParams):
     """Typed wrapper for the OGC exec_body inputs dict.
 
-    Provides structured, validated access to the four spatial inputs and the
-    optional params object.  All spatial layers are kept as raw GeoJSON dicts
-    because their geometry is handled by geopandas; JSON Schema validation of
-    their contents is performed by the fastprocesses framework before this
-    model is constructed.
+    Extends ``PipelineParams`` with the four spatial inputs so that all
+    pipeline parameters and GeoJSON layers live at the same level.  All
+    spatial layers are kept as raw GeoJSON dicts because their geometry is
+    handled by geopandas; JSON Schema validation of their contents is
+    performed by the fastprocesses framework before this model is constructed.
     """
 
     model_config = {"arbitrary_types_allowed": True}
@@ -315,14 +315,15 @@ class ProcessInputs(BaseModel):
     streets: dict
     flood_layers: dict
     statistical_units: dict | None = None
-    params: PipelineParams = Field(default_factory=PipelineParams)
 
     @classmethod
     def from_exec_body(cls, exec_body: dict) -> "ProcessInputs":
         """Parse exec_body['inputs'] into a typed ProcessInputs instance.
 
-        Any params key absent from the user payload falls back to the
-        ``PipelineParams`` default (Pydantic fills it in automatically).
+        All pipeline parameter keys (``vulnerability``, ``hazard``,
+        ``risk_weights``, ``output``, ``n_classification_iterations``,
+        ``target_crs``) are top-level inputs alongside the spatial layers.
+        Any key absent from the user payload falls back to the field default.
         """
         raw: dict = exec_body["inputs"]
         return cls.model_validate(
@@ -331,6 +332,11 @@ class ProcessInputs(BaseModel):
                 "streets": raw["streets"],
                 "flood_layers": raw["flood_layers"],
                 "statistical_units": raw.get("statistical_units"),
-                "params": raw.get("params") or {},
+                "vulnerability": raw.get("vulnerability"),
+                "hazard": raw.get("hazard"),
+                "risk_weights": raw.get("risk_weights"),
+                "output": raw.get("output"),
+                "n_classification_iterations": raw.get("n_classification_iterations"),
+                "target_crs": raw.get("target_crs"),
             }
         )
