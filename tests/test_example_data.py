@@ -49,13 +49,11 @@ Run only these tests::
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
 import pytest
-from scipy.stats import lognorm
 
 from pluvial_flood_risk.algorithms.classification import (
     ClassificationResult,
@@ -104,7 +102,7 @@ from pluvial_flood_risk.models.inputs import HazardParams, PipelineParams
 # Paths
 # ---------------------------------------------------------------------------
 
-_DATA = Path(__file__).parent.parent / "data" / "example"
+_DATA = Path(__file__).parent.parent / "data" / "test"
 
 # ---------------------------------------------------------------------------
 # Module-scoped fixtures — loaded once per test session
@@ -114,7 +112,7 @@ _DATA = Path(__file__).parent.parent / "data" / "example"
 @pytest.fixture(scope="module")
 def buildings_gdf() -> gpd.GeoDataFrame:
     """Buildings projected to ETRS89 / UTM-32N with footprint area column."""
-    gdf = gpd.read_file(_DATA / "buildings_example.geojson").set_crs("EPSG:4326")
+    gdf = gpd.read_file(_DATA / "buildings.geojson").set_crs("EPSG:4326")
     gdf = gdf.to_crs("EPSG:25832")
     gdf[BUILDING_FOOTPRINT_AREA_M2] = gdf.geometry.area
     gdf.index = gdf["ID"]
@@ -124,14 +122,14 @@ def buildings_gdf() -> gpd.GeoDataFrame:
 @pytest.fixture(scope="module")
 def streets_gdf() -> gpd.GeoDataFrame:
     """Streets projected to ETRS89 / UTM-32N."""
-    gdf = gpd.read_file(_DATA / "streets_example.geojson").set_crs("EPSG:4326")
+    gdf = gpd.read_file(_DATA / "streets.geojson").set_crs("EPSG:4326")
     return gdf.to_crs("EPSG:25832")
 
 
 @pytest.fixture(scope="module")
 def flood_all_gdf() -> gpd.GeoDataFrame:
     """All flood-depth classes projected to ETRS89 / UTM-32N."""
-    gdf = gpd.read_file(_DATA / "flood_levels_example.geojson").set_crs("EPSG:4326")
+    gdf = gpd.read_file(_DATA / "flood_levels.geojson").set_crs("EPSG:4326")
     return gdf.to_crs("EPSG:25832")
 
 
