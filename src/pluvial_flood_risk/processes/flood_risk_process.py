@@ -36,6 +36,7 @@ from fastprocesses.processes.process_registry import register_process
 from pydantic import BaseModel
 from referencing import Registry, Resource
 
+from ..algorithms.aggregations import create_thiessen_polygons
 from ..algorithms.classification import (
     ClassificationResult,
     run_classification_pipeline,
@@ -100,14 +101,13 @@ class PfRiskResult(BaseModel):
 
     # GeoJSON FeatureCollection containing all computed columns for every building
     risk_buildings: dict | None = None
+    voronoi_diagram: dict | None = None  # GeoJSON FeatureCollection of Voronoi polygons
 
     # Head/tail break thresholds for cartographic classification
     classification_breaks_wb: list[float] | None = None  # for pluvial_flood_risk_well_being
     classification_breaks_ma: list[float] | None = None  # for pluvial_flood_risk_mobility_accessibility
 
-    # Optional aggregated outputs
-    healpix_aggregation: dict | None = None
-    risk_statistical_units: dict | None = None
+
     validation_report: dict | None = None
 
 
@@ -526,9 +526,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 f"merge_results is missing required step outputs: {missing_steps}"
             )
 
-        inputs: dict = exec_body["inputs"]
-        source_features = inputs["buildings"]["features"]
-        params: PipelineParams = PipelineParams.model_validate(inputs.get("params", {}))
+        inp = ProcessInputs.from_exec_body(exec_body)
+        source_features = inp.buildings["features"]
+        params = inp
 
         partial_frames: list[pd.DataFrame] = []
         for step_name in required_steps:
@@ -570,32 +570,36 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
 
         # Decide which outputs the client requested (OGC API Processes)
         want_risk_buildings = self._is_output_requested(exec_body, "risk_buildings")
+        want_voronoi = self._is_output_requested(exec_body, "voronoi_diagram")
         want_class_breaks_wb = self._is_output_requested(exec_body, "classification_breaks_wb")
         want_class_breaks_ma = self._is_output_requested(exec_body, "classification_breaks_ma")
-        want_healpix = self._is_output_requested(exec_body, "healpix_aggregation")
-        want_stat_units = self._is_output_requested(exec_body, "risk_statistical_units")
 
         # Candidate columns for aggregation (used by HEALPix and unit aggregation)
         candidate_cols = self._candidate_agg_columns()
 
-        # Lazily build enriched features / buildings GeoDataFrame if any dependent
-        # outputs are requested (risk_buildings, HEALPix or statistical units).
+        # Build the enriched buildings GeoDataFrame when any output that depends
+        # on it (risk_buildings, voronoi_diagram) is requested.
         enriched_features = None
         source_buildings_gdf = None
-        if want_risk_buildings or want_healpix or want_stat_units:
+        if want_risk_buildings or want_voronoi:
             enriched_features, source_buildings_gdf = self._build_enriched_features_and_bld_gdf(
                 source_features, classified, params, output_columns, candidate_cols
             )
 
-        risk_buildings = {"type": "FeatureCollection", "features": enriched_features or []} if want_risk_buildings else None
+        risk_buildings = {
+            "type": "FeatureCollection", "features": enriched_features or []
+        } if want_risk_buildings else None
 
-        # HEALPix aggregation (only when requested)
-        healpix_agg_json = self._compute_healpix_aggregation(source_buildings_gdf, params) if want_healpix else None
-
-        # Statistical unit aggregation (only when requested)
-        stat_units_json = None
-        if want_stat_units:
-            stat_units_json = self._compute_statistical_unit_aggregation(inputs, source_buildings_gdf, classified, params, candidate_cols)
+        # Voronoi / Thiessen tessellation (optional output)
+        voronoi_diagram_fc = None
+        if want_voronoi and source_buildings_gdf is not None:
+            blds_metric = self._project_crs_to_metric(
+                source_buildings_gdf, params.target_crs
+            )
+            thiessen_gdf = create_thiessen_polygons(blds_metric)
+            # Reproject back to the original source CRS for GeoJSON output
+            source_crs = source_buildings_gdf.crs or "EPSG:4326"
+            voronoi_diagram_fc = json.loads(thiessen_gdf.to_crs(source_crs).to_json())
 
         # Classification breaks (only when requested)
         classification_breaks_wb = (
@@ -623,10 +627,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
 
         return PfRiskResult(
             risk_buildings=risk_buildings,
+            voronoi_diagram=voronoi_diagram_fc,
             classification_breaks_wb=classification_breaks_wb,
             classification_breaks_ma=classification_breaks_ma,
-            healpix_aggregation=healpix_agg_json,
-            risk_statistical_units=stat_units_json,
             validation_report=None,
         )
 
@@ -704,76 +707,3 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             enriched_features.append({**feature, "properties": properties})
 
         return enriched_features, blds
-
-    def _compute_healpix_aggregation(self, buildings_gdf: gpd.GeoDataFrame | None, params: PipelineParams) -> dict | None:
-        """Compute HEALPix aggregation as GeoJSON dict or return None on failure."""
-        if buildings_gdf is None:
-            return None
-        try:
-            from ..algorithms.aggregations import aggregate_to_healpix
-
-            if getattr(params, "healpix_params", None) and params.healpix_params.depth > 0:
-                healpix_gdf = aggregate_to_healpix(
-                    buildings_gdf,
-                    depth=params.healpix_params.depth,
-                    risk_columns=params.healpix_params.columns,
-                    agg_func=params.healpix_params.agg_func,
-                    min_buildings=params.healpix_params.min_buildings,
-                )
-                return json.loads(healpix_gdf.to_json())
-        except Exception:
-            return None
-        return None
-
-    def _compute_statistical_unit_aggregation(
-        self,
-        inputs: dict,
-        buildings_gdf: gpd.GeoDataFrame | None,
-        classified: ClassificationResult,
-        params: PipelineParams,
-        candidate_cols: list[str],
-    ) -> dict | None:
-        """Aggregate building indicators to statistical units and return GeoJSON dict."""
-        if "statistical_units" not in inputs:
-            raise ValueError("Requested output 'risk_statistical_units' requires 'statistical_units' input")
-        try:
-            stat_fc = inputs["statistical_units"]
-            stat_gdf = self._convert_geojson_to_gdf(stat_fc["features"], params.target_crs)
-
-            bld_for_join = buildings_gdf
-            if bld_for_join is None:
-                bld_for_join = self._convert_geojson_to_gdf(inputs["buildings"]["features"], params.target_crs)
-                if "id" in bld_for_join.columns:
-                    bld_for_join = bld_for_join.set_index("id")
-                bld_for_join.index = bld_for_join.index.astype(str)
-                classified_df = classified.data.copy(); classified_df.index = classified_df.index.astype(str)
-                for col in candidate_cols:
-                    if col in classified_df.columns:
-                        bld_for_join[col] = classified_df[col].reindex(bld_for_join.index).values
-
-            available_agg = [c for c in candidate_cols if c in bld_for_join.columns]
-            if len(bld_for_join) > 0 and len(stat_gdf) > 0 and available_agg:
-                try:
-                    joined = gpd.sjoin(
-                        bld_for_join[["geometry"] + available_agg],
-                        stat_gdf[["geometry"]],
-                        how="inner",
-                        predicate="intersects",
-                    )
-                    for col in available_agg:
-                        agg = joined.groupby("index_right")[col].mean()
-                        stat_gdf[col] = stat_gdf.index.map(agg).fillna(0)
-                except Exception:
-                    # Fallback: per-unit intersection loop (slower)
-                    for idx, unit in stat_gdf.iterrows():
-                        if unit.geometry is None or pd.isna(unit.geometry):
-                            for col in available_agg:
-                                stat_gdf.at[idx, col] = 0
-                            continue
-                        in_unit = bld_for_join[bld_for_join.geometry.intersects(unit.geometry)]
-                        for col in available_agg:
-                            stat_gdf.at[idx, col] = in_unit[col].mean() if len(in_unit) > 0 else 0
-                return json.loads(stat_gdf.to_json())
-        except Exception:
-            return None
-        return None
