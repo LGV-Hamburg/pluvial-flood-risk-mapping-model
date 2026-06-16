@@ -297,6 +297,17 @@ inputs:
         - EPSG:2263
     minOccurs: 0
     maxOccurs: 1
+  n_classification_iterations:
+    title: "Number of Classification Iterations (optional)"
+    description: >-
+      Number of iterations for the head/tail-breaks classification (Step 6). "
+      Yields n+1 risk classes (no risk … very high risk).
+    schema:
+      type: integer
+      minimum: 1
+      default: 4
+    minOccurs: 0
+    maxOccurs: 1
   output_settings:
     title: "Output Parameters (optional)"
     description: >-
