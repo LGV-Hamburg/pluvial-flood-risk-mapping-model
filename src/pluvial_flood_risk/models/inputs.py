@@ -249,17 +249,24 @@ class HealpixParams(BaseModel):
     )
     agg_func: str = Field(
         default="mean",
-        description=("Aggregation function applied to risk columns ('mean','max','sum','median')."),
+        description=(
+            "Aggregation function applied to risk columns "
+            "('mean','max','sum','median')."
+        ),
     )
     min_buildings: int = Field(
         default=3,
         ge=1,
-        description=("Minimum number of buildings per HEALPix cell required for inclusion."),
+        description=(
+            "Minimum number of buildings per HEALPix "
+            "cell required for inclusion."
+        ),
     )
     columns: list[str] | None = Field(
         default=None,
         description=(
-            "Explicit list of columns to aggregate. Omit (None) to auto-detect available risk/hazard columns."
+            "Explicit list of columns to aggregate. Omit "
+            "(None) to auto-detect available risk/hazard columns."
         ),
     )
 
@@ -281,10 +288,12 @@ class PipelineParams(BaseModel):
     >>> params = PipelineParams(vulnerability=VulnerabilityParams(apply_entropy=False))
     """
 
-    vulnerability: VulnerabilityParams = Field(default_factory=VulnerabilityParams)
-    hazard: HazardParams = Field(default_factory=HazardParams)
+    vulnerability_parameters: VulnerabilityParams = Field(
+        default_factory=VulnerabilityParams
+    )
+    hazard_parameters: HazardParams = Field(default_factory=HazardParams)
     risk_weights: RiskWeights = Field(default_factory=RiskWeights)
-    output: OutputParams = Field(default_factory=OutputParams)
+    output_settings: OutputParams = Field(default_factory=OutputParams)
     healpix_params: HealpixParams = Field(default_factory=HealpixParams)
     n_classification_iterations: int = Field(
         default=4,
@@ -321,7 +330,9 @@ class PipelineParams(BaseModel):
         try:
             CRS.from_user_input(value)
         except Exception as exc:
-            raise ValueError(f"Invalid target_crs identifier: {value!r}") from exc
+            raise ValueError(
+                f"Invalid target_crs identifier: {value!r}"
+            ) from exc
         return value
 
 
@@ -360,3 +371,9 @@ class ProcessInputs(PipelineParams):
         return cls.model_validate(
             raw
         )
+
+class ProcessOutputs(BaseModel):
+    risk_buildings: dict
+    classification_breaks_wb: dict
+    classification_breaks_ma: dict
+    voronoi_diagram: dict
