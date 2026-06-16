@@ -344,57 +344,20 @@ outputs:
       type: array
       items:
         type: number
-  healpix_aggregation:
-    title: "HEALPix Aggregated Risk & Vulnerability"
+  voronoi_diagram:
+    title: "Voronoi (Thiessen) Diagram"
     description: >-
-      Building-level risk and vulnerability indicators aggregated to HEALPix
-      cells on the WGS84 ellipsoid (crs: EPSG:4326). Cell resolution is
-      controlled by 'params.healpix_params.depth' (default: 15, ~0.8 km² per
-      cell at mid-latitudes). Cells with fewer buildings than
-      'params.healpix_params.min_buildings' are suppressed (privacy threshold).
-      Aggregated columns: PFRWB, PFRMA, HWB, HMA,
-      social_vulnerability_index, social_vulnerability_flood_potential,
-      sensitivity_index, coping_capacity_index, n_buildings. Supported
-      encodings: GeoJSON (default), FlatGeobuf, PNG image (choropleth,
-      base64-encoded inline value).
+      GeoJSON FeatureCollection of Thiessen (Voronoi) polygons derived from
+      building centroids, clipped to the buffered convex hull of the study area.
+      Each polygon carries the same computed risk and vulnerability columns as
+      the corresponding building in risk_buildings. Useful for continuous
+      choropleth mapping when building footprints are too small for direct
+      visualisation at the target map scale.
     schema:
-      oneOf:
-        - description: "GeoJSON FeatureCollection (default)"
-          allOf:
-            - format: geojson-feature-collection
-            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
-        - description: "FlatGeobuf binary encoding"
-          type: string
-          contentEncoding: binary
-          contentMediaType: application/flatgeobuf
-        - description: >-
-            Rendered choropleth map as a base64-encoded PNG. Suitable for
-            inline display when no GIS client is available.
-          type: string
-          contentEncoding: base64
-          contentMediaType: image/png
-  risk_statistical_units:
-    title: "Statistical Unit Aggregates"
-    description: >-
-      All computed building-level indicators aggregated to statistical unit
-      polygons (mean per unit unless overridden). Requires the
-      'statistical_units' input to be present. Aggregated columns match
-      risk_buildings: sensitivity_index, coping_capacity_index,
-      social_vulnerability_index, social_vulnerability_flood_potential,
-      residents_per_building, residents_ground_floor, hazard_well_being,
-      hazard_mobility_accessibility, pluvial_flood_risk_well_being,
-      pluvial_flood_risk_mobility_accessibility, risk_class_wb, risk_class_ma,
-      n_buildings. Output CRS matches 'params.target_crs' (or EPSG:4326 fallback).
-    schema:
-      oneOf:
-        - description: "GeoJSON FeatureCollection (default)"
-          allOf:
-            - format: geojson-feature-collection
-            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
-        - description: "FlatGeobuf binary encoding"
-          type: string
-          contentEncoding: binary
-          contentMediaType: application/flatgeobuf
+      allOf:
+        - format: geojson-feature-collection
+        - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+#
   validation_report:
     title: "Validation Report"
     description: >-
