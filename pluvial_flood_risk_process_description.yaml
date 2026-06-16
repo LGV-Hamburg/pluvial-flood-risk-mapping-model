@@ -377,61 +377,61 @@ outputs:
       allOf:
         - format: geojson-feature-collection
         - "$ref": "https://geojson.org/schema/FeatureCollection.json"
-  validation_report:
-    title: "Validation Report"
-    description: >-
-      JSON summary of buildings dropped during pipeline execution, grouped by
-      omission cause. Enables graceful partial execution: the pipeline continues
-      with valid features and reports which buildings were excluded and why.
-      Causes include: missing_required_property, invalid_geometry,
-      crs_unprojectable, join_no_statistical_unit,
-      negative_or_zero_floor_area, out_of_flood_layer_extent. Fields:
-      total_input, total_processed, total_dropped, drop_summary [{cause, count,
-      example_ids[]}].
-    schema:
-      type: object
-      required:
-        - total_input
-        - total_processed
-        - total_dropped
-        - drop_summary
-      properties:
-        total_input:
-          type: integer
-          minimum: 0
-        total_processed:
-          type: integer
-          minimum: 0
-        total_dropped:
-          type: integer
-          minimum: 0
-        drop_summary:
-          type: array
-          items:
-            type: object
-            required:
-              - cause
-              - count
-            properties:
-              cause:
-                type: string
-                enum:
-                  - missing_required_property
-                  - invalid_geometry
-                  - crs_unprojectable
-                  - join_no_statistical_unit
-                  - negative_or_zero_floor_area
-                  - out_of_flood_layer_extent
-              count:
-                type: integer
-                minimum: 1
-              example_ids:
-                type: array
-                items:
-                  type: string
-                maxItems: 10
-                description: "Up to 10 feature IDs for debugging"
-  validation_dropped_buildings:
+  # validation_report:
+  #   title: "Validation Report"
+  #   description: >-
+  #     JSON summary of buildings dropped during pipeline execution, grouped by
+  #     omission cause. Enables graceful partial execution: the pipeline continues
+  #     with valid features and reports which buildings were excluded and why.
+  #     Causes include: missing_required_property, invalid_geometry,
+  #     crs_unprojectable, join_no_statistical_unit,
+  #     negative_or_zero_floor_area, out_of_flood_layer_extent. Fields:
+  #     total_input, total_processed, total_dropped, drop_summary [{cause, count,
+  #     example_ids[]}].
+  #   schema:
+  #     type: object
+  #     required:
+  #       - total_input
+  #       - total_processed
+  #       - total_dropped
+  #       - drop_summary
+  #     properties:
+  #       total_input:
+  #         type: integer
+  #         minimum: 0
+  #       total_processed:
+  #         type: integer
+  #         minimum: 0
+  #       total_dropped:
+  #         type: integer
+  #         minimum: 0
+  #       drop_summary:
+  #         type: array
+  #         items:
+  #           type: object
+  #           required:
+  #             - cause
+  #             - count
+  #           properties:
+  #             cause:
+  #               type: string
+  #               enum:
+  #                 - missing_required_property
+  #                 - invalid_geometry
+  #                 - crs_unprojectable
+  #                 - join_no_statistical_unit
+  #                 - negative_or_zero_floor_area
+  #                 - out_of_flood_layer_extent
+  #             count:
+  #               type: integer
+  #               minimum: 1
+  #             example_ids:
+  #               type: array
+  #               items:
+  #                 type: string
+  #               maxItems: 10
+  #               description: "Up to 10 feature IDs for debugging"
+  # validation_dropped_buildings:
     title: "Dropped Buildings (Spatial)"
     description: >-
       GeoJSON FeatureCollection (or FlatGeobuf) of all building features
