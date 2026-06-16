@@ -26,7 +26,7 @@ generate_payload() {
                 streets: $streets[0],
                 flood_layers: $flood_layers[0],
                 statistical_units: $statistical_units[0],
-                params: {target_crs: "EPSG:25832"}
+                target_crs: "EPSG:25832"
             }
         }'
 }

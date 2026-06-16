@@ -7,9 +7,8 @@ the paper.
 
 from __future__ import annotations
 
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pyproj import CRS
-from pydantic import BaseModel, Field, model_validator
-from pydantic import field_validator
 
 # ---------------------------------------------------------------------------
 # Vulnerability (Steps 1.1-1.4)
@@ -132,22 +131,31 @@ class HazardParams(BaseModel):
     buffer_building_m: float = Field(
         default=2.0,
         gt=0.0,
-        description="Buffer radius [m] around building footprint for the well-being hazard (Step 4.1).",
+        description=(
+            "Buffer radius [m] around building footprint "
+            "for the well-being hazard (Step 4.1)."
+        ),
     )
     buffer_zone1_m: float = Field(
         default=5.0,
         gt=0.0,
-        description="Inner buffer radius [m] around building for mobility hazard (Step 3.1).",
+        description=(
+            "Inner buffer radius [m] around building for mobility hazard (Step 3.1)."
+        ),
     )
     buffer_zone2_m: float = Field(
         default=15.0,
         gt=0.0,
-        description="Street buffer radius [m] for the near-access zone (Step 3.1).",
+        description=(
+            "Street buffer radius [m] for the near-access zone (Step 3.1)."
+        ),
     )
     buffer_zone3_m: float = Field(
         default=30.0,
         gt=0.0,
-        description="Street buffer outer radius [m] for the extended-access zone (Step 3.1).",
+        description=(
+            "Street buffer outer radius [m] for the extended-access zone (Step 3.1)."
+        ),
     )
     min_street_flood_area_m2: float = Field(
         default=4.0,
@@ -184,11 +192,11 @@ class HazardParams(BaseModel):
 
 
 class RiskWeights(BaseModel):
-    """Exponent weights for the IPCC risk product formula (Step 5, Eq. 14/15).
+    """Exponent weights for the IPCC risk product formula (Step 5, Eq. 14 and 15).
 
-    PFR = SV_PF^a * E^b * H^c
+    PFR = SV_PF^a * E^b * H^c (this is the general formula for both PFR_WB and PFR_MA).
 
-    All default to 1.0 (unweighted product) as in the paper.
+    All default to 1.0 (unweighted product) as in Vogelbacher et al. (2025).
     """
 
     vulnerability_exponent: float = Field(
@@ -211,7 +219,7 @@ class OutputParams(BaseModel):
     """Controls for the serialized GeoJSON output payload."""
 
     include_input_building_properties: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Include selected original building input properties in the output "
             "feature properties in addition to computed pipeline outputs."
@@ -315,3 +323,51 @@ class PipelineParams(BaseModel):
         except Exception as exc:
             raise ValueError(f"Invalid target_crs identifier: {value!r}") from exc
         return value
+
+
+# ---------------------------------------------------------------------------
+# Process-level input wrapper
+# ---------------------------------------------------------------------------
+
+
+class ProcessInputs(PipelineParams):
+    """Typed wrapper for the OGC exec_body inputs dict.
+
+    Extends ``PipelineParams`` with the four spatial inputs so that all
+    pipeline parameters and GeoJSON layers live at the same level.  All
+    spatial layers are kept as raw GeoJSON dicts because their geometry is
+    handled by geopandas; JSON Schema validation of their contents is
+    performed by the fastprocesses framework before this model is constructed.
+    """
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    buildings: dict
+    streets: dict
+    flood_layers: dict
+    statistical_units: dict | None = None
+
+    @classmethod
+    def from_exec_body(cls, exec_body: dict) -> "ProcessInputs":
+        """Parse exec_body['inputs'] into a typed ProcessInputs instance.
+
+        All pipeline parameter keys (``vulnerability``, ``hazard``,
+        ``risk_weights``, ``output``, ``n_classification_iterations``,
+        ``target_crs``) are top-level inputs alongside the spatial layers.
+        Any key absent from the user payload falls back to the field default.
+        """
+        raw: dict = exec_body["inputs"]
+        return cls.model_validate(
+            {
+                "buildings": raw["buildings"],
+                "streets": raw["streets"],
+                "flood_layers": raw["flood_layers"],
+                "statistical_units": raw.get("statistical_units"),
+                "vulnerability": raw.get("vulnerability"),
+                "hazard": raw.get("hazard"),
+                "risk_weights": raw.get("risk_weights"),
+                "output": raw.get("output"),
+                "n_classification_iterations": raw.get("n_classification_iterations"),
+                "target_crs": raw.get("target_crs"),
+            }
+        )

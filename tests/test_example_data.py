@@ -49,13 +49,11 @@ Run only these tests::
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
 import pytest
-from scipy.stats import lognorm
 
 from pluvial_flood_risk.algorithms.classification import (
     ClassificationResult,
