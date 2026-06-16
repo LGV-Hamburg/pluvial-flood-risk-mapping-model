@@ -66,7 +66,7 @@ from ..models.field_names import (
     SOCIAL_WELFARE_RECIPIENTS,
     STATISTICAL_UNIT_ID,
 )
-from ..models.inputs import PipelineParams, ProcessInputs
+from ..models.inputs import PipelineParams, ProcessInputs, ProcessOutputs
 from ..spatial_utils import join_statistical_unit_attributes
 
 _INPUT_BUILDING_OUTPUT_COLUMNS = [
@@ -522,6 +522,11 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             )
 
         input = ProcessInputs.from_exec_body(exec_body)
+        
+        output: ProcessOutputs | None = ProcessOutputs.model_validate(
+            exec_body.get("outputs", None)
+        )
+
         buildings_features = input.buildings["features"]
 
         partial_frames: list[pd.DataFrame] = []
@@ -564,13 +569,13 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         ]
 
         # Decide which outputs the client requested (OGC API Processes)
-        want_risk_buildings = self._is_output_requested(exec_body, "risk_buildings")
-        want_voronoi = self._is_output_requested(exec_body, "voronoi_diagram")
+        want_risk_buildings = self._is_output_requested(output, "risk_buildings")
+        want_voronoi = self._is_output_requested(output, "voronoi_diagram")
         want_class_breaks_wb = self._is_output_requested(
-            exec_body, "classification_breaks_wb"
+            output, "classification_breaks_wb"
         )
         want_class_breaks_ma = self._is_output_requested(
-            exec_body, "classification_breaks_ma"
+            output, "classification_breaks_ma"
         )
 
         # Candidate columns for aggregation (used by HEALPix and unit aggregation)
@@ -640,18 +645,16 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         )
 
     # ------------------------- Refactor helpers -------------------------
-    def _is_output_requested(self, exec_body: dict, name: str) -> bool:
+    def _is_output_requested(self, outputs: ProcessOutputs | None, name: str) -> bool:
         """Return True when the given output should be produced by this run.
 
         Follows OGC behaviour: if no `outputs` object is present in the
         execution body, all outputs are produced by default.
         """
-        outputs = exec_body.get("outputs")
-        if not outputs:
+        if outputs is None:
             return True
-        if isinstance(outputs, dict):
-            return name in outputs
-        return True
+
+        return getattr(outputs, name) is not None
 
     def _candidate_agg_columns(self) -> list:
         """List of candidate columns used for aggregations."""
