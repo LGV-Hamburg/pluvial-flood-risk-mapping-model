@@ -358,16 +358,5 @@ class ProcessInputs(PipelineParams):
         """
         raw: dict = exec_body["inputs"]
         return cls.model_validate(
-            {
-                "buildings": raw["buildings"],
-                "streets": raw["streets"],
-                "flood_layers": raw["flood_layers"],
-                "statistical_units": raw.get("statistical_units"),
-                "vulnerability": raw.get("vulnerability"),
-                "hazard": raw.get("hazard"),
-                "risk_weights": raw.get("risk_weights"),
-                "output": raw.get("output"),
-                "n_classification_iterations": raw.get("n_classification_iterations"),
-                "target_crs": raw.get("target_crs"),
-            }
+            raw
         )
