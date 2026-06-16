@@ -373,7 +373,7 @@ class ProcessInputs(PipelineParams):
         )
 
 class ProcessOutputs(BaseModel):
-    risk_buildings: dict
-    classification_breaks_wb: dict
-    classification_breaks_ma: dict
-    voronoi_diagram: dict
+    risk_buildings: dict | None = None
+    classification_breaks_wb: dict | None = None
+    classification_breaks_ma: dict | None = None
+    voronoi_diagram: dict | None = None
