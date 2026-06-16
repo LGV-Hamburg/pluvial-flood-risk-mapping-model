@@ -277,9 +277,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             social_vulnerability_index, social_vulnerability_flood_potential
             (one value per building, keyed by building id).
         """
-        inp = ProcessInputs.from_exec_body(exec_body)
-        params = inp
-        features: list[dict] = inp.buildings["features"]
+        input = ProcessInputs.from_exec_body(exec_body)
+
+        buildings_features: list[dict] = input.buildings["features"]
 
         # Check if vulnerability indicators need to be joined from stat units
         vulnerability_cols = [
@@ -288,21 +288,22 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             SOCIAL_WELFARE_RECIPIENTS,
             NO_HIGHSCHOOL_DIPLOMA,
         ]
-        if params.vulnerability.sensitivity_weights.single_parents > 0:
+        if input.vulnerability_parameters.sensitivity_weights.single_parents > 0:
             vulnerability_cols.append(SINGLE_PARENTS)
-        sample_props = features[0]["properties"] if features else {}
+
+        sample_props = buildings_features[0]["properties"] if buildings_features else {}
         indicators_missing = any(
             col not in sample_props for col in vulnerability_cols
         )
 
-        if indicators_missing and inp.statistical_units is not None:
+        if indicators_missing and input.statistical_units is not None:
             # Parse as GeoDataFrame to do the spatial/attribute join
-            gdf = self._convert_geojson_to_gdf(features, params.target_crs)
-            gdf_metric = self._project_crs_to_metric(gdf, params.target_crs)
+            gdf = self._convert_geojson_to_gdf(buildings_features, input.target_crs)
+            gdf_metric = self._project_crs_to_metric(gdf, input.target_crs)
             gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
 
             stat_gdf = self._convert_geojson_to_gdf(
-                inp.statistical_units["features"], params.target_crs
+                input.statistical_units["features"], input.target_crs
             )
             gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
 
@@ -312,11 +313,11 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         else:
             rows = [
                 {"_id": f.get("id") or f["properties"].get("id"), **f["properties"]}
-                for f in features
+                for f in buildings_features
             ]
             df = pd.DataFrame(rows).set_index("_id")
 
-        result_df = run_vulnerability_pipeline(df, params.vulnerability)
+        result_df = run_vulnerability_pipeline(df, input.vulnerability_parameters)
 
         output_columns = [
             SENSITIVITY_INDEX,
@@ -338,13 +339,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             residents_ground_floor, exposure_mobility_accessibility
             (one value per building, keyed by building id).
         """
-        inp = ProcessInputs.from_exec_body(exec_body)
-        params = inp
+        input = ProcessInputs.from_exec_body(exec_body)
 
         gdf = self._convert_geojson_to_gdf(
-            inp.buildings["features"], params.target_crs
+            input.buildings["features"], input.target_crs
         )
-        gdf_metric = self._project_crs_to_metric(gdf, params.target_crs)
+        gdf_metric = self._project_crs_to_metric(gdf, input.target_crs)
         gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
 
         residents_missing = RESIDENTS_IN_STATISTICAL_UNIT not in gdf_metric.columns
@@ -354,8 +354,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         # Join statistical unit attributes when residents are missing, or when
         # living area must be derived but no unit assignment is available.
         needs_join = residents_missing or (living_area_missing and unit_id_missing)
+        
         if needs_join:
-            if inp.statistical_units is None:
+            if input.statistical_units is None:
                 raise ValueError(
                     "The buildings FeatureCollection is missing "
                     "'residents_in_statistical_unit', or cannot derive "
@@ -366,7 +367,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "joining."
                 )
             stat_gdf = self._convert_geojson_to_gdf(
-                inp.statistical_units["features"], params.target_crs
+                input.statistical_units["features"], input.target_crs
             )
             gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
 
@@ -426,7 +427,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         )
 
         result_df = run_hazard_wb_pipeline(
-            buildings_metric, flood_metric, params.hazard
+            buildings_metric, flood_metric, params.hazard_parameters
         )
 
         return {
@@ -447,48 +448,49 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             dict with key: hazard_mobility_accessibility
             (one value per building, keyed by building id).
         """
-        inp = ProcessInputs.from_exec_body(exec_body)
-        params = inp
+        input = ProcessInputs.from_exec_body(exec_body)
 
         buildings_gdf = self._convert_geojson_to_gdf(
-            inp.buildings["features"], params.target_crs
+            input.buildings["features"], input.target_crs
         )
-        buildings_metric = self._project_crs_to_metric(buildings_gdf, params.target_crs)
+        buildings_metric = self._project_crs_to_metric(buildings_gdf, input.target_crs)
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
         streets_gdf = self._convert_geojson_to_gdf(
-            inp.streets["features"], params.target_crs
+            input.streets["features"], input.target_crs
         )
         streets_metric = self._project_crs_to_metric(
-            streets_gdf, params.target_crs, buildings_gdf
+            streets_gdf, input.target_crs, buildings_gdf
         )
 
         # Filter flood features to the configured MA depth class.
-        ma_level = params.hazard.ma_flood_level_cm
+        ma_level = input.hazard_parameters.ma_flood_level_cm
         ma_features = [
             f
-            for f in inp.flood_layers["features"]
+            for f in input.flood_layers["features"]
             if f.get("properties", {}).get("level_cm") == ma_level
         ]
         if not ma_features:
             available = sorted(
                 {
                     f.get("properties", {}).get("level_cm")
-                    for f in inp.flood_layers["features"]
+                    for f in input.flood_layers["features"]
                 }
             )
             raise ValueError(
                 f"No flood features found with level_cm={ma_level} in "
                 f"'flood_layers'. Available levels: {available}"
             )
-        flood_gdf = self._convert_geojson_to_gdf(ma_features, params.target_crs)
+        
+        flood_gdf = self._convert_geojson_to_gdf(ma_features, input.target_crs)
+        
         flood_metric = self._project_crs_to_metric(
-            flood_gdf, params.target_crs, buildings_gdf
+            flood_gdf, input.target_crs, buildings_gdf
         )
 
         result_df = run_hazard_ma_pipeline(
-            buildings_metric, streets_metric, flood_metric, params.hazard
+            buildings_metric, streets_metric, flood_metric, input.hazard_parameters
         )
 
         return {
@@ -526,9 +528,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 f"merge_results is missing required step outputs: {missing_steps}"
             )
 
-        inp = ProcessInputs.from_exec_body(exec_body)
-        source_features = inp.buildings["features"]
-        params = inp
+        input = ProcessInputs.from_exec_body(exec_body)
+        buildings_features = input.buildings["features"]
 
         partial_frames: list[pd.DataFrame] = []
         for step_name in required_steps:
@@ -543,12 +544,13 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             partial_frames.append(pd.DataFrame(step_columns))
 
         merged_df = pd.concat(partial_frames, axis=1)
+        
         # Ensure index is string dtype for consistent lookups
         merged_df.index = merged_df.index.astype(str)
-        risk_df = run_risk_pipeline(merged_df, params.risk_weights)
+        risk_df = run_risk_pipeline(merged_df, input.risk_weights)
         classified: ClassificationResult = run_classification_pipeline(
             risk_df,
-            params.n_classification_iterations,
+            input.n_classification_iterations,
         )
 
         output_columns = [
@@ -571,8 +573,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         # Decide which outputs the client requested (OGC API Processes)
         want_risk_buildings = self._is_output_requested(exec_body, "risk_buildings")
         want_voronoi = self._is_output_requested(exec_body, "voronoi_diagram")
-        want_class_breaks_wb = self._is_output_requested(exec_body, "classification_breaks_wb")
-        want_class_breaks_ma = self._is_output_requested(exec_body, "classification_breaks_ma")
+        want_class_breaks_wb = self._is_output_requested(
+            exec_body, "classification_breaks_wb"
+        )
+        want_class_breaks_ma = self._is_output_requested(
+            exec_body, "classification_breaks_ma"
+        )
 
         # Candidate columns for aggregation (used by HEALPix and unit aggregation)
         candidate_cols = self._candidate_agg_columns()
@@ -582,8 +588,11 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         enriched_features = None
         source_buildings_gdf = None
         if want_risk_buildings or want_voronoi:
-            enriched_features, source_buildings_gdf = self._build_enriched_features_and_bld_gdf(
-                source_features, classified, params, output_columns, candidate_cols
+            enriched_features, source_buildings_gdf = (
+                self._build_enriched_features_and_bld_gdf(
+                    buildings_features, classified, input,
+                    output_columns, candidate_cols
+                )
             )
 
         risk_buildings = {
@@ -594,7 +603,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         voronoi_diagram_fc = None
         if want_voronoi and source_buildings_gdf is not None:
             blds_metric = self._project_crs_to_metric(
-                source_buildings_gdf, params.target_crs
+                source_buildings_gdf, input.target_crs
             )
             thiessen_gdf = create_thiessen_polygons(blds_metric)
             # Reproject back to the original source CRS for GeoJSON output
@@ -606,7 +615,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             [
                 cast(
                     float,
-                    self._serialize_output_value(value, params.output.decimal_precision),
+                    self._serialize_output_value(
+                        value, input.output_settings.decimal_precision
+                    ),
                 )
                 for value in classified.breaks_well_being
             ]
@@ -617,7 +628,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             [
                 cast(
                     float,
-                    self._serialize_output_value(value, params.output.decimal_precision),
+                    self._serialize_output_value(
+                        value, input.output_settings.decimal_precision
+                    ),
                 )
                 for value in classified.breaks_mobility_accessibility
             ]
@@ -664,36 +677,47 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         self,
         source_features: list[dict],
         classified: ClassificationResult,
-        params: PipelineParams,
+        input: PipelineParams,
         output_columns: list[str],
         candidate_cols: list[str],
     ) -> tuple[list[dict], gpd.GeoDataFrame]:
         """Return (enriched_features, buildings_gdf) for downstream outputs.
 
         Attaches numeric columns from `classified.data` to the GeoDataFrame
-        and serialises the building features according to `params.output`.
+        and serialises the building features according to `inputs.output_settings`.
         """
-        blds = self._convert_geojson_to_gdf(source_features, params.target_crs)
-        if "id" in blds.columns:
-            blds = blds.set_index("id")
-        blds.index = blds.index.astype(str)
+        buildings_gdf = self._convert_geojson_to_gdf(source_features, input.target_crs)
+
+        if "id" in buildings_gdf.columns:
+            buildings_gdf = buildings_gdf.set_index("id")
+        buildings_gdf.index = buildings_gdf.index.astype(str)
 
         classified_df = classified.data.copy()
         classified_df.index = classified_df.index.astype(str)
+        
         for col in candidate_cols:
             if col in classified_df.columns:
-                blds[col] = classified_df[col].reindex(blds.index).values
+                buildings_gdf[col] = classified_df[col].reindex(
+                    buildings_gdf.index
+                ).values
 
         enriched_features = []
         for feature in source_features:
             feature_id = feature.get("id") or feature.get("properties", {}).get("id")
             if feature_id is None:
-                raise ValueError("Each building feature must provide an id either at the feature top level or in properties.id.")
+                raise ValueError(
+                    "Each building feature must provide an " \
+                    "id either at the feature top level or in properties.id."
+                )
             building_id = str(feature_id)
             if building_id not in classified.data.index:
-                raise ValueError(f"Missing merged results for building id {building_id!r}.")
+                raise ValueError(
+                    f"Missing merged results for building id {building_id!r}."
+                )
+            
             source_properties = feature.get("properties", {})
-            if params.output.include_input_building_properties:
+            
+            if input.output_settings.include_input_building_properties:
                 properties = {
                     column: source_properties[column]
                     for column in _INPUT_BUILDING_OUTPUT_COLUMNS
@@ -703,7 +727,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 properties = {}
             row = classified.data.loc[building_id]
             for column in output_columns:
-                properties[column] = self._serialize_output_value(row[column], params.output.decimal_precision)
+                properties[column] = self._serialize_output_value(
+                    row[column], input.output_settings.decimal_precision
+                )
             enriched_features.append({**feature, "properties": properties})
 
-        return enriched_features, blds
+        return enriched_features, buildings_gdf
