@@ -10,6 +10,7 @@ jobControlOptions:
   - async-execute
 outputTransmission:
   - value
+#
 inputs:
   buildings:
     title: "Buildings Feature Collection"
@@ -301,7 +302,7 @@ inputs:
             rounding.
     minOccurs: 0
     maxOccurs: 1
-
+#
 outputs:
   risk_buildings:
     title: "Risk Buildings"
@@ -346,7 +347,6 @@ outputs:
       allOf:
         - format: geojson-feature-collection
         - "$ref": "https://geojson.org/schema/FeatureCollection.json"
-#
   validation_report:
     title: "Validation Report"
     description: >-
@@ -419,6 +419,7 @@ outputs:
           type: string
           contentEncoding: binary
           contentMediaType: application/flatgeobuf
+#
 keywords:
   - flood
   - risk
