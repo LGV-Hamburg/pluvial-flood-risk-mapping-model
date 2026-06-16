@@ -103,17 +103,20 @@ inputs:
         - "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layers-schema.json"
     minOccurs: 1
     maxOccurs: 1
-  params:
-    title: "Pipeline Parameters (optional)"
+  vulnerability_parameters:
+    title: "Vulnerability Parameters (optional)"
     description: >-
-      JSON object for overriding algorithm defaults. All fields are optional;
-      omitting this input applies the paper-derived defaults (Vogelbacher et
-      al., 2025).
+      Algorithm parameters for the vulnerability pipeline (Steps 1.1-1.4). All
+      fields are optional; omitting this input applies the defaults
+      (Vogelbacher et al., 2025).
     schema:
       type: object
       properties:
-        vulnerability_weights:
+        sensitivity_weights:
           type: object
+          description: >-
+            TOPSIS weights for sensitivity indicators (Step 1.1). Must sum to
+            1.0.
           properties:
             children_under_10:
               type: number
@@ -131,9 +134,15 @@ inputs:
               maximum: 1.0
               default: 0.0
               description: >-
-                Sensitivity weight for single-parent households. Default 0
-                excludes this indicator. Set > 0 and adjust other sensitivity
+                Optional sensitivity weight for single-parent households.
+                Default 0 excludes this indicator. Set > 0 and adjust other
                 weights to sum to 1.0.
+        coping_capacity_weights:
+          type: object
+          description: >-
+            TOPSIS weights for coping-capacity indicators (Step 1.2). Must sum
+            to 1.0.
+          properties:
             social_welfare_recipients:
               type: number
               minimum: 0.0
@@ -144,6 +153,12 @@ inputs:
               minimum: 0.0
               maximum: 1.0
               default: 0.5
+        svi_weights:
+          type: object
+          description: >-
+            TOPSIS weights for the SVI aggregation step (Step 1.3). Must sum
+            to 1.0.
+          properties:
             sensitivity:
               type: number
               minimum: 0.0
@@ -154,165 +169,139 @@ inputs:
               minimum: 0.0
               maximum: 1.0
               default: 0.5
-            apply_entropy:
-              type: boolean
-              default: true
-              description: Apply Shannon entropy weighting to TOPSIS scores
-        flood_sensitivity_params:
-          type: object
-          properties:
-            threshold_fraction:
-              type: number
-              minimum: 0.0
-              maximum: 1.0
-              default: 0.25
-              description: Fraction of mean SVI added as floor value (Eq. 7)
-            exponent:
-              type: integer
-              minimum: 1
-              default: 2
-              maximum: 3
-              description: Power applied to shifted SVI (Eq. 7)
-        hazard_params:
-          type: object
-          properties:
-            buffer_building_m:
-              type: number
-              minimum: 0.0
-              default: 2.0
-              description: Buffer radius around buildings for HWB [m]
-            buffer_street_inner_m:
-              type: number
-              minimum: 0.0
-              default: 15.0
-              description: Inner street buffer radius for HMA [m]
-            buffer_street_outer_m:
-              type: number
-              minimum: 0.0
-              default: 30.0
-              description: Outer street buffer radius for HMA [m]
-            buffer_access_m:
-              type: number
-              minimum: 0.0
-              default: 5.0
-              description: Direct access buffer radius for HMA [m]
-            min_street_flood_area_m2:
-              type: number
-              minimum: 0.0
-              default: 4.0
-              description: Minimum flooded street area to include in HMA [m²]
-            lognormal_shape:
-              type: number
-              minimum: 0.0
-              default: 0.25
-              description: Shape parameter σ of the log-normal CDF (Eq. 11)
-            ma_flood_level_cm:
-              type: integer
-              minimum: 20
-              maximum: 100
-              multipleOf: 10
-              default: 30
-              description: >-
-                Water depth class [cm] from flood_layers used for the mobility
-                & accessibility hazard (Steps 3.1-3.2)
-        risk_weights:
-          type: object
-          properties:
-            hazard_exponent:
-              type: number
-              minimum: 0.0
-              default: 1.0
-              description: Exponent a applied to hazard index (Eq. 14/15)
-            exposure_exponent:
-              type: number
-              minimum: 0.0
-              default: 1.0
-              description: Exponent b applied to exposure index (Eq. 14/15)
-            vulnerability_exponent:
-              type: number
-              minimum: 0.0
-              default: 1.0
-              description: Exponent c applied to vulnerability index (Eq. 14/15)
-            n_classification_iterations:
-              type: integer
-              minimum: 1
-              default: 4
-              description: Number of head/tail break iterations for risk classification
-        target_crs:
-          type: string
-          default: "null"
-          examples:
-            - EPSG:25832
-            - http://www.opengis.net/def/crs/EPSG/0/25832
-            - urn:ogc:def:crs:EPSG::25832
-            - EPSG:32632
-            - EPSG:2263
+        apply_entropy:
+          type: boolean
+          default: true
           description: >-
-            CRS identifier for all spatial calculations. Accepted forms include
-            EPSG tokens, OGC CRS URIs, OGC URNs, and proj strings. Required when
-            inputs carry projected (metric) coordinates (e.g. 'EPSG:25832' for
-            Hamburg / ETRS89 UTM-32N). Omit for standard WGS-84 GeoJSON — UTM
-            zone is then auto-detected from the input data centroid.
-        healpix_params:
-          type: object
-          properties:
-            depth:
-              type: integer
-              minimum: 1
-              maximum: 29
-              default: 15
-              description: >-
-                HEALPix depth (nside = 2^depth). depth=15 → ~0.8 km² per cell at
-                mid-latitudes. depth=12 → ~50 km² (district level). depth=17 →
-                ~50 m² (building cluster level).
-            agg_func:
-              type: string
-              enum:
-                - mean
-                - max
-                - sum
-                - median
-              default: mean
-              description: >-
-                Aggregation function applied to all risk columns. Use 'max' for
-                worst-case mapping, 'mean' for average exposure.
-            min_buildings:
-              type: integer
-              minimum: 1
-              default: 3
-              description: >-
-                Minimum number of buildings per HEALPix cell required for the
-                cell to appear in the output (privacy threshold).
-            columns:
-              type: array
-              items:
-                type: string
-              default: "null"
-              description: >-
-                Explicit list of columns to aggregate. Omit to use all available
-                risk/hazard columns (PFRWB, PFRMA, HWB, HMA,
-                social_vulnerability_index, …).
-        output:
-          type: object
-          properties:
-            include_input_building_properties:
-              type: boolean
-              default: false
-              description: >-
-                Include selected original building properties in the output
-                feature properties.
-            decimal_precision:
-              anyOf:
-                - type: integer
-                  minimum: 0
-                - type: "null"
-              minimum: 0
-              default: 4
-              description: >-
-                Number of decimal places used for serialized floating-point
-                outputs. Set to null to disable rounding.
+            Multiply TOPSIS closeness by the Shannon entropy index U_i (Eq.
+            6). Accounts for heterogeneity of indicator values.
+        threshold_fraction:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          default: 0.25
+          description: >-
+            Fraction of mean(SVI) added as floor before the power transform
+            (Eq. 7).
+        exponent:
+          type: number
+          minimum: 0.0
+          default: 2.0
+          description: >-
+            Power applied in the flood sensitivity transform (Eq. 7).
     minOccurs: 0
     maxOccurs: 1
+  hazard_parameters:
+    title: "Hazard Parameters (optional)"
+    description: >-
+      Spatial and statistical parameters for the hazard calculations (Steps
+      3-4). All fields are optional; omitting this input applies the defaults
+      (Vogelbacher et al., 2025).
+    schema:
+      type: object
+      properties:
+        buffer_building_m:
+          type: number
+          minimum: 1.0
+          default: 2.0
+          description: >-
+            Buffer radius around buildings for HWB [m] (Step 4.1).
+        buffer_zone1_m:
+          type: number
+          minimum: 1.0
+          default: 5.0
+          description: >-
+            Zone 1 direct-access buffer radius for HMA [m] (Step 3.1).
+        buffer_zone2_m:
+          type: number
+          minimum: 1.0
+          default: 15.0
+          description: >-
+            Zone 2 near-street buffer radius for HMA [m] (Step 3.1).
+        buffer_zone3_m:
+          type: number
+          minimum: 1.0
+          default: 30.0
+          description: >-
+            Zone 3 extended-access buffer outer radius for HMA [m] (Step 3.1).
+        min_street_flood_area_m2:
+          type: number
+          minimum: 0.0
+          default: 4.0
+          description: >-
+            Minimum flooded street area to include in HMA [m²].
+        lognormal_shape:
+          type: number
+          minimum: 0.25
+          maximum: 1.0
+          default: 0.25
+          description: >-
+            Shape parameter σ of the log-normal CDF (Eq. 11). μ fixed at 0.
+        ma_flood_level_cm:
+          type: integer
+          minimum: 20
+          maximum: 50
+          multipleOf: 10
+          default: 30
+          description: >-
+            Water depth class [cm] from flood_layers used for the mobility &
+            accessibility hazard (Steps 3.1-3.2).
+    minOccurs: 0
+    maxOccurs: 1
+  risk_weights:
+    title: "Risk Weights (optional)"
+    description: >-
+      Exponent weights for the IPCC risk product formula (Step 5, Eq. 14/15):
+      PFR = SV_PF^a * E^b * H^c. All default to 1.0 (unweighted product) as
+      in Vogelbacher et al. (2025).
+    schema:
+      type: object
+      properties:
+        vulnerability_exponent:
+          type: number
+          minimum: 1.0
+          maximum: 3.0
+          default: 1.0
+          description: Exponent a applied to SV_PF.
+        exposure_exponent:
+          type: number
+          minimum: 1.0
+          maximum: 3.0
+          default: 1.0
+          description: Exponent b applied to E.
+        hazard_exponent:
+          type: number
+          minimum: 1.0
+          maximum: 3.0
+          default: 1.0
+          description: Exponent c applied to H.
+    minOccurs: 0
+    maxOccurs: 1
+  output_settings:
+    title: "Output Parameters (optional)"
+    description: >-
+      Controls for the serialized GeoJSON output payload.
+    schema:
+      type: object
+      properties:
+        include_input_building_properties:
+          type: boolean
+          default: true
+          description: >-
+            Include selected original building properties in the output
+            feature properties.
+        decimal_precision:
+          anyOf:
+            - type: integer
+              minimum: 0
+            - type: null
+          default: 4
+          description: >-
+            Number of decimal places for floating-point outputs. null disables
+            rounding.
+    minOccurs: 0
+    maxOccurs: 1
+
 outputs:
   risk_buildings:
     title: "Risk Buildings"
