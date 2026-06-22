@@ -36,19 +36,17 @@ inputs:
               type: string
               format: uri
               description: >-
-                URI of a remote resource returning a GeoJSON FeatureCollection,
-                e.g. an OGC API Features items endpoint.
+                OGC API Features items endpoint URL
+                (e.g. .../collections/{id}/items). The server paginates through
+                all pages and downloads the complete collection. Both
+                application/geo+json and application/flatgeobuf responses are
+                accepted; FlatGeobuf is decoded transparently.
             type:
               type: string
               enum:
                 - application/geo+json
-                - application/json
-              description: Media type of the remote resource.
-            schema:
-              type: string
-              format: uri
-              const: >-
-                https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/buildings-schema.json
+                - application/flatgeobuf
+              description: Preferred media type to request from the items endpoint.
           additionalProperties: false
     minOccurs: 1
     maxOccurs: 1
@@ -59,10 +57,32 @@ inputs:
       mobility & accessibility hazard calculation (Step 3) to construct the 15 m
       and 30 m buffer zones around road access.
     schema:
-      allOf:
-        - format: geojson-feature-collection
-        - "$ref": "https://geojson.org/schema/FeatureCollection.json"
-        - "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/streets-schema.json"
+      oneOf:
+        - allOf:
+            - format: geojson-feature-collection
+            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+            - "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/streets-schema.json"
+        - type: object
+          required:
+            - href
+            - type
+          properties:
+            href:
+              type: string
+              format: uri
+              description: >-
+                OGC API Features items endpoint URL
+                (e.g. .../collections/{id}/items). The server paginates through
+                all pages and downloads the complete collection. Both
+                application/geo+json and application/flatgeobuf responses are
+                accepted; FlatGeobuf is decoded transparently.
+            type:
+              type: string
+              enum:
+                - application/geo+json
+                - application/flatgeobuf
+              description: Preferred media type to request from the items endpoint.
+          additionalProperties: false
     minOccurs: 1
     maxOccurs: 1
   statistical_units:
@@ -98,10 +118,32 @@ inputs:
       (Steps 3.1–3.2) uses only features matching
       'hazard_params.ma_flood_level_cm' (default: 30 cm).
     schema:
-      allOf:
-        - format: geojson-feature-collection
-        - "$ref": "https://geojson.org/schema/FeatureCollection.json"
-        - "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layers-schema.json"
+      oneOf:
+        - allOf:
+            - format: geojson-feature-collection
+            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+            - "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layers-schema.json"
+        - type: object
+          required:
+            - href
+            - type
+          properties:
+            href:
+              type: string
+              format: uri
+              description: >-
+                OGC API Features items endpoint URL
+                (e.g. .../collections/{id}/items). The server paginates through
+                all pages and downloads the complete collection. Both
+                application/geo+json and application/flatgeobuf responses are
+                accepted; FlatGeobuf is decoded transparently.
+            type:
+              type: string
+              enum:
+                - application/geo+json
+                - application/flatgeobuf
+              description: Preferred media type to request from the items endpoint.
+          additionalProperties: false
     minOccurs: 1
     maxOccurs: 1
   vulnerability_parameters:
