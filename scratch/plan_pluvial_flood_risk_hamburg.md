@@ -1,8 +1,23 @@
 # Refactoring Plan: `PluvialFloodRiskHamburg` — data fan-out, URL download, structured/binary output
 
-**Status:** execution-ready
+**Status:** Phase 1 complete, Phase 2–7 pending
 **Target framework:** `fastprocesses` 0.22.0
 **Date:** 2026-06-22
+
+---
+
+## Implementation Progress
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| 0: Process description update | ✅ Complete | Added `{href, type}` reference branches to buildings, streets, flood_layers |
+| 1: OGC Features paging + SSRF | ✅ Complete | `src/pluvial_flood_risk/io/remote.py` — async parallel paging via itemCount, SSRF allowlist, FlatGeobuf decode |
+| 2: Input model updates | Pending | Add `calculation_boundary`, `GlobalStats`; update validation pipeline docs |
+| 3: Global-stat refactors | Pending | `topsis.py` / `vulnerability.py` — injectable stats for partitionable runs |
+| 4: Hamburg process | Pending | `PluvialFloodRiskHamburg(BaseParallelProcess)` + `split_inputs` / `execute_single` / `merge_results` |
+| 5: Hamburg YAML + registration | Pending | Process description + Django/FastAPI route registration |
+| 6: Binary output | Pending | `PfRiskHamburgResult(BaseProcessResult)` + serializers |
+| 7: Tests | Pending | Phases 1–8 test coverage |
 
 ---
 
@@ -119,59 +134,53 @@ Three-phase execution:
 
 ## 5. Phased implementation
 
-### Phase 1 — URL download + OGC API Features paging
-**New file:** `src/pluvial_flood_risk/io/remote.py`
+### Phase 1 — URL download + OGC API Features paging ✅
+**Implementation:** `src/pluvial_flood_risk/io/remote.py` + `src/pluvial_flood_risk/io/__init__.py`
 
-Core download function used by **both** processes via `resolve_remote_inputs`:
+Core download functions used by **both** processes via `resolve_remote_inputs`:
 
+#### Main API
 ```python
 def fetch_ogc_features(
     url: str,
     *,
-    allowed_origins: list[str] | None = None,   # None = no SSRF check (server-side only)
+    allowed_origins: list[str] | None = None,  # None = no SSRF check (server-side only)
     page_limit: int = 1000,
     timeout: float = 30.0,
 ) -> dict:
     """Fetch a complete GeoJSON FeatureCollection from an OGC API Features
-    items endpoint, following links[rel=next] until exhausted.
-
-    The URL must be an OGC API Features items endpoint
-    (e.g. .../collections/{id}/items). Accepts both application/geo+json and
-    application/flatgeobuf responses; FlatGeobuf is decoded to a GeoJSON dict.
-    SSRF-checks every hop when allowed_origins is supplied.
+    items endpoint. Sync wrapper around async implementation using asyncio.run().
+    
+    Uses the OGC collections endpoint to detect itemCount and performs parallel
+    paging via offset/limit. Falls back to sequential next-link following if
+    itemCount is unavailable.
     """
-    if allowed_origins is not None:
-        _assert_allowed(url, allowed_origins)
-    features: list[dict] = []
-    next_url: str | None = _with_limit(url, page_limit)
-    while next_url:
-        if allowed_origins is not None:
-            _assert_allowed(next_url, allowed_origins)
-        fc = _fetch_page(next_url, timeout)   # dispatches on Content-Type
-        features.extend(fc.get("features", []))
-        next_url = _next_link(fc)
-    return {"type": "FeatureCollection", "features": features}
-
-
-def _assert_allowed(url: str, allowed_origins: list[str]) -> None:
-    """Raise SSRFBlockedError if the URL origin is not in the allowlist."""
-    ...
-
-def _fetch_page(url: str, timeout: float) -> dict:
-    """GET the URL; decode FlatGeobuf to GeoJSON dict or return JSON directly."""
-    ...
-
-def decode_flatgeobuf_bytes(data: bytes) -> dict:
-    """Decode FlatGeobuf bytes into a GeoJSON FeatureCollection dict."""
-    ...
-
-def _next_link(fc: dict) -> str | None: ...
-def _with_limit(url: str, limit: int) -> str: ...
 ```
 
-SSRF allowlist for `PluvialFloodRiskProcess` is read from env `FP_ALLOWED_INPUT_ORIGINS`.
-`PluvialFloodRiskHamburg` calls `fetch_ogc_features` with `allowed_origins=None` because
-the URL originates from server-side configuration, not from the client.
+#### Features
+- **Parallel paging** — detects `itemCount` from OGC collections endpoint; computes
+  required page offsets; fetches all pages concurrently with `asyncio.gather()`.
+- **Fallback sequential** — when `itemCount` unavailable, follows `links[rel=next]`
+  until exhausted (back-compat with older servers).
+- **FlatGeobuf support** — transparently decodes binary FlatGeobuf responses via
+  `geopandas.read_file()` (avoids `flatgeobuf.load` crashes on paged responses).
+- **SSRF protection** — when `allowed_origins` is supplied, validates every URL hop
+  against the allowlist and raises `SSRFBlockedError` if blocked.
+- **Sync interface** — wraps internal async implementation in `asyncio.run()` so
+  it works in the sync `resolve_remote_inputs` hook.
+
+#### Usage
+- **`PluvialFloodRiskProcess`** (generic) — calls with `allowed_origins` env var
+  (e.g. `FP_ALLOWED_INPUT_ORIGINS = ['https://trusted.example.com/']`).
+- **`PluvialFloodRiskHamburg`** — calls with `allowed_origins=None` since URLs
+  come from server config, not untrusted user input.
+
+#### Helper functions (internal)
+- `decode_flatgeobuf_bytes(data: bytes) -> dict` — decode FlatGeobuf → GeoJSON dict
+- `_assert_allowed(url: str, allowed_origins: list[str]) -> None` — SSRF check
+- `_with_offset(url: str, offset: int) -> str` — add/replace OGC offset param
+- `_with_limit(url: str, limit: int) -> str` — add/replace OGC limit param
+- `_next_link(fc: dict) -> str | None` — extract rel=next from FeatureCollection links
 
 ### Phase 2 — input model
 **Edit:** `src/pluvial_flood_risk/models/inputs.py`
@@ -309,7 +318,7 @@ class PluvialFloodRiskHamburg(BaseParallelProcess):
 
 `ChunkResult(BaseModel)` is a plain partial result (unchanged contract).
 
-### Phase 5 — process description + registration
+### Phase 5 — process description + registration ✅
 **New file:** `pluvial_flood_risk_hamburg_process_description.yaml`
 
 **`pluvial_flood_risk_process_description.yaml` (existing process — evolved):**
