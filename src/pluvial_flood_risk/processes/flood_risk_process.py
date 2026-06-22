@@ -66,7 +66,15 @@ from ..models.field_names import (
     SOCIAL_WELFARE_RECIPIENTS,
     STATISTICAL_UNIT_ID,
 )
-from ..models.inputs import PipelineParams, ProcessInputs, ProcessOutputs
+from ..models.inputs import (
+    BuildingsFeatureCollection,
+    FloodLayersFeatureCollection,
+    PipelineParams,
+    ProcessInputs,
+    ProcessOutputs,
+    StatisticalUnitsFeatureCollection,
+    StreetsFeatureCollection,
+)
 from ..spatial_utils import join_statistical_unit_attributes
 
 _INPUT_BUILDING_OUTPUT_COLUMNS = [
@@ -196,6 +204,30 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     process_description = ProcessDescription.from_yaml(
         "pluvial_flood_risk_process_description.yaml"
     )
+
+    # ------------------------------------------------------------------
+    # Validation hook
+    # ------------------------------------------------------------------
+
+    def late_validate(self, inputs: dict) -> bool:
+        """Validate resolved FeatureCollections against typed geojson-pydantic models.
+
+        Called by fastprocesses after ``resolve_remote_inputs`` substitutes any
+        URL-valued inputs with downloaded data.  At this point every spatial input
+        is a plain GeoJSON dict and can be parsed against its typed alias.
+
+        Raises ``ValueError`` (forwarded to the job as a user-facing error) if any
+        FeatureCollection is structurally invalid or a feature is missing required
+        properties (e.g. ``depth_cm`` on flood layers, ``residents`` on statistical
+        units).  Extra properties are silently ignored (``extra='ignore'``).
+        """
+        BuildingsFeatureCollection.model_validate(inputs["buildings"])
+        StreetsFeatureCollection.model_validate(inputs["streets"])
+        FloodLayersFeatureCollection.model_validate(inputs["flood_layers"])
+        if inputs.get("statistical_units") is not None:
+            StatisticalUnitsFeatureCollection.model_validate(inputs["statistical_units"])
+        return True
+
     # ------------------------------------------------------------------
     # CRS helper
     # ------------------------------------------------------------------
