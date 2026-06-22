@@ -19,14 +19,14 @@ Each branch receives the full exec_body and runs on its own Celery worker.
 
 import json
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 
 import geopandas as gpd
 import pandas as pd
+from fastprocesses import BaseProcessResult
 from fastprocesses.core.base_process import BaseScatterProcess, parallel_step
 from fastprocesses.core.models import ProcessDescription
 from fastprocesses.processes.process_registry import register_process
-from pydantic import BaseModel
 from referencing import Registry, Resource
 
 from ..algorithms.aggregations import create_thiessen_polygons
@@ -86,11 +86,38 @@ _INPUT_BUILDING_OUTPUT_COLUMNS = [
 # ---------------------------------------------------------------------------
 
 
-class PfRiskResult(BaseModel):
+class PfRiskResult(BaseProcessResult):
     """Combined output of the pluvial flood risk pipeline.
 
     Fields mirror the process outputs declared in ``process_description.outputs``.
     """
+
+    output_serializers: ClassVar = {
+            "risk_buildings": {
+                "application/geo+json": "risk_buildings_to_json",
+            },
+            "voronoi_diagram": {
+                "application/geo+json": "voronoi_diagram_to_json",
+            },
+            "classification_breaks_wb": {
+                "application/json": "classification_breaks_wb_to_json"
+            },
+            "classification_breaks_ma": {
+                "application/json": "classification_breaks_ma_to_json"
+            }
+        }
+
+    def risk_buildings_to_json(self) -> bytes:
+            return self.model_dump_json().encode()
+    
+    def voronoi_diagram_to_json(self) -> bytes:
+            return self.model_dump_json().encode()
+    
+    def classification_breaks_wb_to_json(self) -> bytes:
+            return self.model_dump_json().encode()
+    
+    def classification_breaks_ma_to_json(self) -> bytes:
+            return self.model_dump_json().encode()
 
     # GeoJSON FeatureCollection containing all computed columns for every building
     risk_buildings: dict | None = None
@@ -99,7 +126,6 @@ class PfRiskResult(BaseModel):
     # Head/tail break thresholds for cartographic classification
     classification_breaks_wb: list[float] | None = None  # for pluvial_flood_risk_well_being
     classification_breaks_ma: list[float] | None = None  # for pluvial_flood_risk_mobility_accessibility
-
 
     validation_report: dict | None = None
 
@@ -507,7 +533,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             exec_body: The original process execution body.
 
         Returns:
-            RiskResult with GeoJSON FeatureCollection and classification breaks.
+            PfRiskResult with GeoJSON FeatureCollection and classification breaks.
         """
         required_steps = {
             "vulnerability_pipeline",
