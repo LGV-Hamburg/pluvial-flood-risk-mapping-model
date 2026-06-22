@@ -432,29 +432,29 @@ outputs:
   #               maxItems: 10
   #               description: "Up to 10 feature IDs for debugging"
   # validation_dropped_buildings:
-    title: "Dropped Buildings (Spatial)"
-    description: >-
-      GeoJSON FeatureCollection (or FlatGeobuf) of all building features
-      excluded from processing. Each feature retains its original geometry and
-      properties, extended with 'omission_cause' (string) and 'omission_detail'
-      (string, human-readable explanation). Useful for spatial QA — load
-      directly into a GIS to review which areas are affected.
-    schema:
-      oneOf:
-        - description: "GeoJSON FeatureCollection (default)"
-          allOf:
-            - format: geojson-feature-collection
-            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
-        - description: "FlatGeobuf binary encoding"
-          type: string
-          contentEncoding: binary
-          contentMediaType: application/flatgeobuf
+  #   title: "Dropped Buildings (Spatial)"
+  #   description: >-
+  #     GeoJSON FeatureCollection (or FlatGeobuf) of all building features
+  #     excluded from processing. Each feature retains its original geometry and
+  #     properties, extended with 'omission_cause' (string) and 'omission_detail'
+  #     (string, human-readable explanation). Useful for spatial QA — load
+  #     directly into a GIS to review which areas are affected.
+  #   schema:
+  #     oneOf:
+  #       - description: "GeoJSON FeatureCollection (default)"
+  #         allOf:
+  #           - format: geojson-feature-collection
+  #           - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+  #       - description: "FlatGeobuf binary encoding"
+  #         type: string
+  #         contentEncoding: binary
+  #         contentMediaType: application/flatgeobuf
 #
 keywords:
   - flood
   - risk
   - pluvial
   - IPCC
-  - vulnerability
+  - social vulnerability
   - hazard
   - urban
