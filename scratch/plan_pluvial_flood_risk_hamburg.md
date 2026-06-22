@@ -1,6 +1,6 @@
 # Refactoring Plan: `PluvialFloodRiskHamburg` — data fan-out, URL download, structured/binary output
 
-**Status:** Phase 1 complete, Phase 2–7 pending
+**Status:** Phase 2 complete, Phase 3–7 pending
 **Target framework:** `fastprocesses` 0.22.0
 **Date:** 2026-06-22
 
@@ -11,8 +11,8 @@
 | Phase | Status | Notes |
 |-------|--------|-------|
 | 0: Process description update | ✅ Complete | Added `{href, type}` reference branches to buildings, streets, flood_layers |
-| 1: OGC Features paging + SSRF | ✅ Complete | `src/pluvial_flood_risk/io/remote.py` — async parallel paging via itemCount, SSRF allowlist, FlatGeobuf decode |
-| 2: Input model updates | Pending | Add `calculation_boundary`, `GlobalStats`; update validation pipeline docs |
+| 1: OGC Features paging + SSRF | ✅ Complete | `src/pluvial_flood_risk/io/remote.py` — async parallel paging via itemCount, SSRF allowlist, FlatGeobuf decode, semaphore rate-limiting |
+| 2: Input model updates | ✅ Complete | `GlobalStats`; `ProcessInputs.calculation_boundary`; typed geojson-pydantic `FeatureCollection` aliases; `late_validate` + `resolve_remote_inputs` on `PluvialFloodRiskProcess`; `fetch_flatgeobuf` in io layer |
 | 3: Global-stat refactors | Pending | `topsis.py` / `vulnerability.py` — injectable stats for partitionable runs |
 | 4: Hamburg process | Pending | `PluvialFloodRiskHamburg(BaseParallelProcess)` + `split_inputs` / `execute_single` / `merge_results` |
 | 5: Hamburg YAML + registration | Pending | Process description + Django/FastAPI route registration |
@@ -182,16 +182,27 @@ def fetch_ogc_features(
 - `_with_limit(url: str, limit: int) -> str` — add/replace OGC limit param
 - `_next_link(fc: dict) -> str | None` — extract rel=next from FeatureCollection links
 
-### Phase 2 — input model
-**Edit:** `src/pluvial_flood_risk/models/inputs.py`
+### Phase 2 — input model + validation hooks on PluvialFloodRiskProcess ✅
+**Edited:** `src/pluvial_flood_risk/models/inputs.py`, `src/pluvial_flood_risk/processes/flood_risk_process.py`, `src/pluvial_flood_risk/io/remote.py`
 
 - Inline `buildings` / `streets` / `flood_layers` accept **GeoJSON FeatureCollection
   objects only**. FlatGeobuf is supported exclusively via URL download — there is
   no inline base64 FlatGeobuf path.
-- Add `calculation_boundary: dict | None` (single Polygon/MultiPolygon GeoJSON feature,
-  Hamburg process only, `minOccurs: 0`).
-- Add `GlobalStats` model carrying TOPSIS per-criterion L2 norms + `ideal_max` /
-  `ideal_min` and `svi_mean`, to be injected into each partition.
+- Added `calculation_boundary: dict | None` (optional Polygon/MultiPolygon GeoJSON).
+- Added `GlobalStats` dataclass (`l2_norms`, `ideal_max`, `ideal_min`, `svi_mean`).
+- Added typed `FeatureCollection` aliases using `geojson-pydantic`:
+  `BuildingsFeatureCollection`, `StreetsFeatureCollection`,
+  `FloodLayersFeatureCollection`, `StatisticalUnitsFeatureCollection`.
+- Added `late_validate(inputs)` to `PluvialFloodRiskProcess` — validates resolved
+  FeatureCollections via the typed aliases (geojson-pydantic `model_validate`).
+- Added `resolve_remote_inputs(exec_body)` to `PluvialFloodRiskProcess`:
+  - Detects `{href, type}` reference objects in `buildings`, `streets`, `flood_layers`.
+  - Reads SSRF allowlist from `FP_ALLOWED_INPUT_ORIGINS` env var (JSON array or
+    comma-separated). Raises `ValueError` if not set when a URL is supplied.
+  - Dispatches to `fetch_ogc_features` (GeoJSON) or `fetch_flatgeobuf` (FlatGeobuf).
+- Added `fetch_flatgeobuf(url, *, allowed_origins, timeout)` to `io/remote.py` and
+  exported from `io/__init__.py` — fetches raw bytes and decodes via
+  `decode_flatgeobuf_bytes`.
 
 **Validation pipeline** (fastprocesses hook order, relevant for URL inputs):
 1. `validate_inputs` — runs on the raw wire value. When the client passes a
@@ -201,8 +212,8 @@ def fetch_ogc_features(
    data (GeoJSON or FlatGeobuf → GeoJSON dict), and substitutes the resolved value
    back into `exec_body["inputs"]`. SSRF check happens here.
 3. `late_validate` — receives resolved inputs (actual GeoJSON FeatureCollections)
-   and validates them against Pydantic models. This is the only place where
-   downloaded data is structurally validated.
+   and validates them via typed geojson-pydantic aliases. This is the only place
+   where downloaded data is structurally validated.
 
 ### Phase 3 — refactor global-stat functions (back-compatible)
 **Edit:** `topsis.py`, `vulnerability.py`
