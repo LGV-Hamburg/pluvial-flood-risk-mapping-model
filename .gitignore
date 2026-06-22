@@ -176,3 +176,4 @@ secrets/*
 # scratch folder
 scratch/*
 !scratch/arcpy*
+!scratch/*.md
