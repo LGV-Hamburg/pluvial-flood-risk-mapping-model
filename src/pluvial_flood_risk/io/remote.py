@@ -173,8 +173,9 @@ async def _fetch_pages_parallel(
     # Collect errors and merge features
     features = []
     for result in page_results:
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             raise result
+        
         features.extend(result.get("features", []))
 
     return features
@@ -269,6 +270,65 @@ def decode_flatgeobuf_bytes(data: bytes) -> dict:
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+def fetch_flatgeobuf(
+    url: str,
+    *,
+    allowed_origins: list[str] | None = None,
+    timeout: float = 30.0,
+) -> dict:
+    """Fetch a FlatGeobuf resource and decode it to a GeoJSON FeatureCollection.
+
+    Use this when the client supplies a ``{href, type}`` reference object with
+    ``type='application/flatgeobuf'``.  The raw bytes are fetched in a single
+    request and decoded via :func:`decode_flatgeobuf_bytes`.
+
+    Parameters
+    ----------
+    url : str
+        Direct URL to a FlatGeobuf file or endpoint.
+    allowed_origins : list[str] | None
+        SSRF allowlist; same semantics as :func:`fetch_ogc_features`.
+    timeout : float
+        Request timeout in seconds. Default 30.
+
+    Returns
+    -------
+    dict
+        GeoJSON FeatureCollection dict.
+
+    Raises
+    ------
+    SSRFBlockedError
+        If the URL origin is not in *allowed_origins*.
+    ValueError
+        If the download or FlatGeobuf decoding fails.
+    """
+    return asyncio.run(
+        _fetch_flatgeobuf_async(url, allowed_origins=allowed_origins, timeout=timeout)
+    )
+
+
+async def _fetch_flatgeobuf_async(
+    url: str,
+    *,
+    allowed_origins: list[str] | None = None,
+    timeout: float = 30.0,
+) -> dict:
+    """Async implementation of fetch_flatgeobuf."""
+    if allowed_origins is not None:
+        _assert_allowed(url, allowed_origins)
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            url,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as response:
+            response.raise_for_status()
+            data = await response.read()
+
+    return decode_flatgeobuf_bytes(data)
 
 
 def _assert_allowed(url: str, allowed_origins: list[str]) -> None:
