@@ -18,6 +18,7 @@ Each branch receives the full exec_body and runs on its own Celery worker.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import ClassVar, cast
 
@@ -39,6 +40,7 @@ from ..algorithms.hazard_ma import run_hazard_ma_pipeline
 from ..algorithms.hazard_wb import run_hazard_wb_pipeline
 from ..algorithms.risk import run_risk_pipeline
 from ..algorithms.vulnerability import run_vulnerability_pipeline
+from ..io import fetch_flatgeobuf, fetch_ogc_features
 from ..models.field_names import (
     BUILDING_FOOTPRINT_AREA_M2,
     BUILDING_LIVING_AREA_M2,
@@ -204,6 +206,82 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     process_description = ProcessDescription.from_yaml(
         "pluvial_flood_risk_process_description.yaml"
     )
+
+    # ------------------------------------------------------------------
+    # Remote input resolution (Phase 1 hook)
+    # ------------------------------------------------------------------
+
+    _REFERENCE_INPUTS = ("buildings", "streets", "flood_layers")
+
+    def resolve_remote_inputs(self, exec_body: dict) -> dict:
+        """Download any URL-valued inputs and replace them with resolved data.
+
+        Detects ``{href, type}`` reference objects in ``buildings``,
+        ``streets``, and ``flood_layers``.  Inline FeatureCollection dicts
+        are passed through unchanged.
+
+        The SSRF allowlist is read from the ``FP_ALLOWED_INPUT_ORIGINS``
+        environment variable.  Its value must be a JSON array of origin
+        prefixes (e.g. ``'["https://trusted.example.com/"]'``) or a
+        comma-separated list of prefixes.  The variable **must** be set
+        when any URL input is present; an unset or empty value raises
+        ``ValueError``.
+
+        Supported media types (``type`` field of the reference object):
+
+        - ``application/geo+json`` — fetched via OGC API Features paging
+          (:func:`~pluvial_flood_risk.io.fetch_ogc_features`).
+        - ``application/flatgeobuf`` — fetched as raw bytes and decoded via
+          :func:`~pluvial_flood_risk.io.fetch_flatgeobuf`.
+        """
+        inputs = dict(exec_body["inputs"])
+        references = [
+            key for key in self._REFERENCE_INPUTS
+            if isinstance(inputs.get(key), dict) and "href" in inputs[key]
+        ]
+        if not references:
+            return exec_body
+
+        allowed_origins = self._load_allowed_origins()
+
+        for key in references:
+            inputs[key] = self._resolve_reference(inputs[key], allowed_origins)
+
+        return {**exec_body, "inputs": inputs}
+
+    @staticmethod
+    def _load_allowed_origins() -> list[str]:
+        """Read FP_ALLOWED_INPUT_ORIGINS from the environment.
+
+        Raises
+        ------
+        ValueError
+            If the variable is missing or empty.
+        """
+        raw = os.environ.get("FP_ALLOWED_INPUT_ORIGINS", "").strip()
+        if not raw:
+            raise ValueError(
+                "FP_ALLOWED_INPUT_ORIGINS is not set. "
+                "Configure an allowlist of trusted origin prefixes "
+                "(JSON array or comma-separated) before accepting URL inputs."
+            )
+        try:
+            origins = json.loads(raw)
+            if not isinstance(origins, list):
+                raise ValueError("FP_ALLOWED_INPUT_ORIGINS must be a JSON array.")
+            return origins
+        except json.JSONDecodeError:
+            return [o.strip() for o in raw.split(",") if o.strip()]
+
+    @staticmethod
+    def _resolve_reference(ref: dict, allowed_origins: list[str]) -> dict:
+        """Fetch and decode a single ``{href, type}`` reference object."""
+        href: str = ref["href"]
+        media_type: str = ref["type"]
+        if media_type == "application/flatgeobuf":
+            return fetch_flatgeobuf(href, allowed_origins=allowed_origins)
+        # Default: application/geo+json via OGC API Features paging
+        return fetch_ogc_features(href, allowed_origins=allowed_origins)
 
     # ------------------------------------------------------------------
     # Validation hook
