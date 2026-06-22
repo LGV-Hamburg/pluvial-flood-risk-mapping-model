@@ -171,4 +171,8 @@ cython_debug/
 .pixi/
 
 # secrets
-#secrets/*
+secrets/*
+
+# scratch folder
+scratch/*
+!scratch/arcpy*
