@@ -20,6 +20,7 @@ Each branch receives the full exec_body and runs on its own Celery worker.
 import json
 import logging
 import os
+from collections import Counter
 from pathlib import Path
 from typing import ClassVar, cast
 
@@ -301,12 +302,33 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         units).  Extra properties are silently ignored (``extra='ignore'``).
         """
         logger.info("late_validate: validating resolved FeatureCollections")
+        for name in ("buildings", "streets", "flood_layers", "statistical_units"):
+            fc = inputs.get(name)
+            if fc is None:
+                continue
+            geom_types = Counter(
+                (f.get("geometry") or {}).get("type", "null")
+                for f in fc.get("features", [])
+            )
+            if geom_types.keys() - {"Polygon", "MultiPolygon"}:
+                logger.warning(
+                    "late_validate: '%s' contains unexpected geometry types: %s",
+                    name, dict(geom_types),
+                )
+            else:
+                logger.debug(
+                    "late_validate: '%s' geometry types: %s", name, dict(geom_types)
+                )
         BuildingsFeatureCollection.model_validate(inputs["buildings"])
+        
         logger.debug("late_validate: buildings OK (%d features)", len(inputs["buildings"].get("features", [])))
         StreetsFeatureCollection.model_validate(inputs["streets"])
+        
         logger.debug("late_validate: streets OK (%d features)", len(inputs["streets"].get("features", [])))
         FloodLayersFeatureCollection.model_validate(inputs["flood_layers"])
+        
         logger.debug("late_validate: flood_layers OK (%d features)", len(inputs["flood_layers"].get("features", [])))
+        
         if inputs.get("statistical_units") is not None:
             StatisticalUnitsFeatureCollection.model_validate(inputs["statistical_units"])
             logger.debug(
