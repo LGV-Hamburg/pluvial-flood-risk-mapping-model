@@ -376,9 +376,6 @@ class StreetProperties(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    id: int | str = Field(
-        description="Unique street/road identifier (numerical or string)."
-    )
 
 
 class FloodLayerProperties(BaseModel):
@@ -390,9 +387,6 @@ class FloodLayerProperties(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    id: int | str = Field(
-        description="Unique flood layer identifier (numerical or string)."
-    )
     level_cm: int = Field(
         ge=0,
         description="Flood water depth in centimeters (e.g., 30, 50, 100).",
