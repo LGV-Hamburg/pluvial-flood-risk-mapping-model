@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from geojson_pydantic import Feature, FeatureCollection
-from geojson_pydantic.geometries import MultiPolygon, Polygon
+from geojson_pydantic.geometries import GeometryCollection, MultiPolygon, Polygon
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pyproj import CRS
 
@@ -376,7 +376,7 @@ class StreetProperties(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    gid: int | str = Field(
+    id: int | str = Field(
         description="Unique street/road identifier (numerical or string)."
     )
 
@@ -455,16 +455,16 @@ class StatisticalUnitProperties(BaseModel):
 # ---------------------------------------------------------------------------
 
 BuildingsFeatureCollection = FeatureCollection[
-    Feature[Polygon | MultiPolygon, BuildingProperties]
+    Feature[Polygon | MultiPolygon | GeometryCollection, BuildingProperties]
 ]
 StreetsFeatureCollection = FeatureCollection[
-    Feature[Polygon | MultiPolygon, StreetProperties]
+    Feature[Polygon | MultiPolygon | GeometryCollection, StreetProperties]
 ]
 FloodLayersFeatureCollection = FeatureCollection[
-    Feature[Polygon | MultiPolygon, FloodLayerProperties]
+    Feature[Polygon | MultiPolygon | GeometryCollection, FloodLayerProperties]
 ]
 StatisticalUnitsFeatureCollection = FeatureCollection[
-    Feature[Polygon | MultiPolygon, StatisticalUnitProperties]
+    Feature[Polygon | MultiPolygon | GeometryCollection, StatisticalUnitProperties]
 ]
 
 
