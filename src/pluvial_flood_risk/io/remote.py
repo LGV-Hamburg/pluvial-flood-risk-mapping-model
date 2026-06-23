@@ -222,9 +222,18 @@ async def _get_item_count(
     if path_parts[-1] != "items" or len(path_parts) < 2:
         return None
 
-    # Reconstruct URL without 'items' path segment
+    # Reconstruct collections URL: drop /items path segment and strip all
+    # query parameters except 'f' (format) — extra params like filters are
+    # not valid on the collections endpoint and cause 400 responses.
     collections_path = "/".join(path_parts[:-1])
-    collections_url = urlunparse(parsed._replace(path=collections_path))
+    original_query = parse_qs(parsed.query, keep_blank_values=True)
+    collections_query = {k: v for k, v in original_query.items() if k == "f"}
+    collections_url = urlunparse(
+        parsed._replace(
+            path=collections_path,
+            query=urlencode(collections_query, doseq=True),
+        )
+    )
 
     try:
         if allowed_origins is not None:
