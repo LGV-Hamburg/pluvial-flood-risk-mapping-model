@@ -9,8 +9,91 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import aiohttp
 import geopandas as gpd
 from fastprocesses.core.exceptions import SSRFBlockedError
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential_jitter,
+)
 
 logger = logging.getLogger(__name__)
+
+_MAX_RETRY_ATTEMPTS = 10
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Return True for exceptions that warrant a retry.
+
+    Retries on:
+    - ``asyncio.TimeoutError`` — server too slow, often transient.
+    - ``aiohttp.ClientResponseError`` with status 429 or 5xx — rate-limit or
+      temporary server error.
+    - Any other ``aiohttp.ClientError`` (connection reset, DNS failure, etc.).
+
+    Does **not** retry on 4xx client errors (bad request, auth, not found).
+    """
+    if isinstance(exc, asyncio.TimeoutError):
+        return True
+    if isinstance(exc, aiohttp.ClientResponseError):
+        return exc.status == 429 or exc.status >= 500
+    if isinstance(exc, aiohttp.ClientError):
+        return True
+    return False
+
+
+def _before_sleep_log(retry_state: RetryCallState) -> None:
+    """Log a WARNING before each retry, including the URL and attempt count."""
+    url = retry_state.args[0] if retry_state.args else "unknown"
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    logger.warning(
+        "Retrying request to %s (attempt %d/%d) after: %s",
+        url, retry_state.attempt_number, _MAX_RETRY_ATTEMPTS, exc,
+    )
+
+
+@retry(
+    retry=retry_if_exception(_is_retryable),
+    wait=wait_exponential_jitter(initial=1, max=60),
+    stop=stop_after_attempt(_MAX_RETRY_ATTEMPTS),
+    before_sleep=_before_sleep_log,
+    reraise=True,
+)
+async def _get_json(
+    url: str,
+    session: aiohttp.ClientSession,
+    semaphore: asyncio.Semaphore,
+) -> dict:
+    """Fetch JSON from *url* via GET, respecting *semaphore*.
+
+    Raises native aiohttp / asyncio exceptions so the tenacity retry
+    predicate can inspect them.  Context-enriched re-raises happen in
+    the callers after all retries are exhausted.
+    """
+    async with semaphore:
+        async with session.get(url) as response:
+            response.raise_for_status()
+            return await response.json()
+
+
+@retry(
+    retry=retry_if_exception(_is_retryable),
+    wait=wait_exponential_jitter(initial=1, max=60),
+    stop=stop_after_attempt(_MAX_RETRY_ATTEMPTS),
+    before_sleep=_before_sleep_log,
+    reraise=True,
+)
+async def _get_bytes(
+    url: str,
+    session: aiohttp.ClientSession,
+) -> bytes:
+    """Fetch raw bytes from *url* via GET.
+
+    Same retry / exception semantics as :func:`_get_json`.
+    """
+    async with session.get(url) as response:
+        response.raise_for_status()
+        return await response.read()
 
 
 def fetch_ogc_features(
@@ -218,12 +301,12 @@ async def _fetch_page_with_offset(
         "Fetching page offset=%d limit=%d (URL: %s)", offset, limit, url
     )
     try:
-        async with (semaphore or asyncio.Semaphore(1)):
-            async with session.get(page_url) as response:
-                response.raise_for_status()
-                return await response.json()
+        return await _get_json(page_url, session, semaphore or asyncio.Semaphore(1))
     except asyncio.TimeoutError as exc:
-        logger.error("Timeout fetching page offset=%d from %s", offset, page_url)
+        logger.error(
+            "Timeout (all %d retries exhausted) fetching page offset=%d from %s",
+            _MAX_RETRY_ATTEMPTS, offset, page_url,
+        )
         raise asyncio.TimeoutError(
             f"Timeout fetching page offset={offset} from {page_url!r}"
         ) from exc
@@ -237,7 +320,10 @@ async def _fetch_page_with_offset(
             f"{exc.message}"
         ) from exc
     except aiohttp.ClientError as exc:
-        logger.error("Network error fetching page offset=%d from %s: %s", offset, page_url, exc)
+        logger.error(
+            "Network error (all %d retries exhausted) fetching page offset=%d from %s: %s",
+            _MAX_RETRY_ATTEMPTS, offset, page_url, exc,
+        )
         raise ValueError(
             f"Network error fetching page offset={offset} from {page_url!r}: {exc}"
         ) from exc
@@ -261,12 +347,12 @@ async def _fetch_pages_sequential(
 
         logger.debug("Fetching sequential page %d: %s", page_num, next_url)
         try:
-            async with (semaphore or asyncio.Semaphore(1)):
-                async with session.get(next_url) as response:
-                    response.raise_for_status()
-                    fc = await response.json()
+            fc = await _get_json(next_url, session, semaphore or asyncio.Semaphore(1))
         except asyncio.TimeoutError as exc:
-            logger.error("Timeout fetching sequential page %d from %s", page_num, next_url)
+            logger.error(
+                "Timeout (all %d retries exhausted) fetching sequential page %d from %s",
+                _MAX_RETRY_ATTEMPTS, page_num, next_url,
+            )
             raise asyncio.TimeoutError(
                 f"Timeout fetching sequential page {page_num} from {next_url!r}"
             ) from exc
@@ -280,7 +366,10 @@ async def _fetch_pages_sequential(
                 f"from {next_url!r}: {exc.message}"
             ) from exc
         except aiohttp.ClientError as exc:
-            logger.error("Network error on sequential page %d from %s: %s", page_num, next_url, exc)
+            logger.error(
+                "Network error (all %d retries exhausted) on sequential page %d from %s: %s",
+                _MAX_RETRY_ATTEMPTS, page_num, next_url, exc,
+            )
             raise ValueError(
                 f"Network error on sequential page {page_num} from {next_url!r}: {exc}"
             ) from exc
@@ -385,11 +474,12 @@ async def _fetch_flatgeobuf_async(
         _assert_allowed(url, allowed_origins)
 
     try:
-        async with session.get(url) as response:
-            response.raise_for_status()
-            data = await response.read()
+        data = await _get_bytes(url, session)
     except asyncio.TimeoutError as exc:
-        logger.error("Timeout fetching FlatGeobuf from %s", url)
+        logger.error(
+            "Timeout (all %d retries exhausted) fetching FlatGeobuf from %s",
+            _MAX_RETRY_ATTEMPTS, url,
+        )
         raise asyncio.TimeoutError(
             f"Timeout fetching FlatGeobuf from {url!r}"
         ) from exc
@@ -399,8 +489,13 @@ async def _fetch_flatgeobuf_async(
             f"HTTP {exc.status} fetching FlatGeobuf from {url!r}: {exc.message}"
         ) from exc
     except aiohttp.ClientError as exc:
-        logger.error("Network error fetching FlatGeobuf from %s: %s", url, exc)
-        raise ValueError(f"Network error fetching FlatGeobuf from {url!r}: {exc}") from exc
+        logger.error(
+            "Network error (all %d retries exhausted) fetching FlatGeobuf from %s: %s",
+            _MAX_RETRY_ATTEMPTS, url, exc,
+        )
+        raise ValueError(
+            f"Network error fetching FlatGeobuf from {url!r}: {exc}"
+        ) from exc
 
     logger.info("fetch_flatgeobuf: received %d bytes from %s", len(data), url)
     result = decode_flatgeobuf_bytes(data)
