@@ -29,7 +29,9 @@ import pandas as pd
 from fastprocesses import BaseProcessResult
 from fastprocesses.core.base_process import BaseScatterProcess, parallel_step
 from fastprocesses.core.models import ProcessDescription
+from fastprocesses.core.types import JobProgressCallback
 from fastprocesses.processes.process_registry import register_process
+from pydantic import ValidationError
 from referencing import Registry, Resource
 
 from ..algorithms.aggregations import create_thiessen_polygons
@@ -76,9 +78,11 @@ from ..models.inputs import (
     PipelineParams,
     ProcessInputs,
     ProcessOutputs,
+    StatisticalUnitProperties,
     StatisticalUnitsFeatureCollection,
     StreetsFeatureCollection,
 )
+from ..settings import settings
 from ..spatial_utils import join_statistical_unit_attributes
 
 logger = logging.getLogger(__name__)
@@ -153,6 +157,48 @@ def load_schema_file(path: str) -> Resource:
     schema = json.loads(Path(path).read_text())
     return Resource.from_contents(schema)
 
+
+def _drop_invalid_statistical_units(fc: dict) -> dict:
+    """Return a new FeatureCollection with invalid statistical unit features removed.
+
+    Each feature is validated individually against
+    :class:`~pluvial_flood_risk.models.inputs.StatisticalUnitProperties`.
+    Features that fail validation are logged at WARNING level and excluded from
+    the returned collection.  The caller receives a clean collection that passes
+    ``StatisticalUnitsFeatureCollection.model_validate``.
+
+    Only called when ``PFR_DROP_INCOMPLETE_STATISTICAL_UNITS=true``.
+    """
+    valid_features = []
+    dropped = 0
+    for feature in fc.get("features", []):
+        try:
+            StatisticalUnitProperties.model_validate(
+                feature.get("properties") or {}
+            )
+            valid_features.append(feature)
+        except ValidationError as exc:
+            unit_id = (feature.get("properties") or {}).get(
+                "statistical_unit_id", "<unknown>"
+            )
+            logger.warning(
+                "late_validate: dropping statistical unit %r — validation error: %s",
+                unit_id, exc,
+            )
+            dropped += 1
+
+    if dropped:
+        logger.warning(
+            "late_validate: dropped %d/%d incomplete statistical unit features "
+            "(PFR_DROP_INCOMPLETE_STATISTICAL_UNITS=true)",
+            dropped, dropped + len(valid_features),
+        )
+    logger.debug(
+        "late_validate: statistical_units OK after dropping (%d features kept)",
+        len(valid_features),
+    )
+    return {**fc, "features": valid_features}
+
 # ---------------------------------------------------------------------------
 # Process
 # ---------------------------------------------------------------------------
@@ -217,7 +263,10 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
 
     _REFERENCE_INPUTS = ("buildings", "streets", "flood_layers")
 
-    def resolve_remote_inputs(self, exec_body: dict) -> dict:
+    def resolve_remote_inputs(
+        self, exec_body: dict,
+        job_progress_callback: JobProgressCallback | None = None
+    ) -> dict:
         """Download any URL-valued inputs and replace them with resolved data.
 
         Detects ``{href, type}`` reference objects in ``buildings``,
@@ -258,7 +307,10 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 key, len(data.get("features", [])),
             )
             inputs[key] = data
-
+        if job_progress_callback:
+            job_progress_callback(
+                0, "Downloaded remote inputs: %s" % ", ".join(references)
+            )
         return {**exec_body, "inputs": inputs}
 
     @staticmethod
@@ -289,7 +341,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     # Validation hook
     # ------------------------------------------------------------------
 
-    def late_validate(self, inputs: dict) -> bool:
+    def late_validate(
+            self, inputs: dict
+        ) -> bool:
         """Validate resolved FeatureCollections against typed geojson-pydantic models.
 
         Called by fastprocesses after ``resolve_remote_inputs`` substitutes any
@@ -330,11 +384,18 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         logger.debug("late_validate: flood_layers OK (%d features)", len(inputs["flood_layers"].get("features", [])))
         
         if inputs.get("statistical_units") is not None:
-            StatisticalUnitsFeatureCollection.model_validate(inputs["statistical_units"])
-            logger.debug(
-                "late_validate: statistical_units OK (%d features)",
-                len(inputs["statistical_units"].get("features", [])),
-            )
+            if settings.drop_incomplete_statistical_units:
+                inputs["statistical_units"] = _drop_invalid_statistical_units(
+                    inputs["statistical_units"]
+                )
+            else:
+                StatisticalUnitsFeatureCollection.model_validate(
+                    inputs["statistical_units"]
+                )
+                logger.debug(
+                    "late_validate: statistical_units OK (%d features)",
+                    len(inputs["statistical_units"].get("features", [])),
+                )
         logger.info("late_validate: all inputs valid")
         return True
 
