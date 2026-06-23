@@ -18,6 +18,7 @@ Each branch receives the full exec_body and runs on its own Celery worker.
 """
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import ClassVar, cast
@@ -40,7 +41,7 @@ from ..algorithms.hazard_ma import run_hazard_ma_pipeline
 from ..algorithms.hazard_wb import run_hazard_wb_pipeline
 from ..algorithms.risk import run_risk_pipeline
 from ..algorithms.vulnerability import run_vulnerability_pipeline
-from ..io import fetch_flatgeobuf, fetch_ogc_features
+from ..io import fetch_all_references
 from ..models.field_names import (
     BUILDING_FOOTPRINT_AREA_M2,
     BUILDING_LIVING_AREA_M2,
@@ -78,6 +79,8 @@ from ..models.inputs import (
     StreetsFeatureCollection,
 )
 from ..spatial_utils import join_statistical_unit_attributes
+
+logger = logging.getLogger(__name__)
 
 _INPUT_BUILDING_OUTPUT_COLUMNS = [
     FLOORS_ABOVE_GROUND,
@@ -240,12 +243,20 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             if isinstance(inputs.get(key), dict) and "href" in inputs[key]
         ]
         if not references:
+            logger.debug("resolve_remote_inputs: all inputs are inline, skipping")
             return exec_body
 
+        logger.info("resolve_remote_inputs: downloading remote inputs: %s", references)
         allowed_origins = self._load_allowed_origins()
 
-        for key in references:
-            inputs[key] = self._resolve_reference(inputs[key], allowed_origins)
+        ref_map = {key: inputs[key] for key in references}
+        resolved = fetch_all_references(ref_map, allowed_origins=allowed_origins)
+        for key, data in resolved.items():
+            logger.info(
+                "Resolved '%s': %d features",
+                key, len(data.get("features", [])),
+            )
+            inputs[key] = data
 
         return {**exec_body, "inputs": inputs}
 
@@ -273,16 +284,6 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         except json.JSONDecodeError:
             return [o.strip() for o in raw.split(",") if o.strip()]
 
-    @staticmethod
-    def _resolve_reference(ref: dict, allowed_origins: list[str]) -> dict:
-        """Fetch and decode a single ``{href, type}`` reference object."""
-        href: str = ref["href"]
-        media_type: str = ref["type"]
-        if media_type == "application/flatgeobuf":
-            return fetch_flatgeobuf(href, allowed_origins=allowed_origins)
-        # Default: application/geo+json via OGC API Features paging
-        return fetch_ogc_features(href, allowed_origins=allowed_origins)
-
     # ------------------------------------------------------------------
     # Validation hook
     # ------------------------------------------------------------------
@@ -299,11 +300,20 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         properties (e.g. ``depth_cm`` on flood layers, ``residents`` on statistical
         units).  Extra properties are silently ignored (``extra='ignore'``).
         """
+        logger.info("late_validate: validating resolved FeatureCollections")
         BuildingsFeatureCollection.model_validate(inputs["buildings"])
+        logger.debug("late_validate: buildings OK (%d features)", len(inputs["buildings"].get("features", [])))
         StreetsFeatureCollection.model_validate(inputs["streets"])
+        logger.debug("late_validate: streets OK (%d features)", len(inputs["streets"].get("features", [])))
         FloodLayersFeatureCollection.model_validate(inputs["flood_layers"])
+        logger.debug("late_validate: flood_layers OK (%d features)", len(inputs["flood_layers"].get("features", [])))
         if inputs.get("statistical_units") is not None:
             StatisticalUnitsFeatureCollection.model_validate(inputs["statistical_units"])
+            logger.debug(
+                "late_validate: statistical_units OK (%d features)",
+                len(inputs["statistical_units"].get("features", [])),
+            )
+        logger.info("late_validate: all inputs valid")
         return True
 
     # ------------------------------------------------------------------
@@ -446,7 +456,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             ]
             df = pd.DataFrame(rows).set_index("_id")
 
+        logger.info("vulnerability_pipeline: %d buildings", len(df))
         result_df = run_vulnerability_pipeline(df, input.vulnerability_parameters)
+        logger.debug("vulnerability_pipeline: done")
 
         output_columns = [
             SENSITIVITY_INDEX,
@@ -513,7 +525,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         if "id" in gdf_metric.columns:
             gdf_metric = gdf_metric.set_index("id")
 
+        logger.info("exposure_pipeline: %d buildings", len(gdf_metric))
         result_df = run_exposure_pipeline(gdf_metric)
+        logger.debug("exposure_pipeline: done")
 
         output_columns = [
             BUILDING_LIVING_AREA_M2,
@@ -555,9 +569,14 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             flood_gdf, params.target_crs, buildings_gdf
         )
 
+        logger.info(
+            "hazard_wb_pipeline: %d buildings, %d flood features",
+            len(buildings_metric), len(flood_gdf),
+        )
         result_df = run_hazard_wb_pipeline(
             buildings_metric, flood_metric, params.hazard_parameters
         )
+        logger.debug("hazard_wb_pipeline: done")
 
         return {
             HAZARD_WELL_BEING: result_df[HAZARD_WELL_BEING]
@@ -600,6 +619,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             for f in input.flood_layers["features"]
             if f.get("properties", {}).get("level_cm") == ma_level
         ]
+        logger.debug(
+            "hazard_ma_pipeline: filtering flood_layers to level_cm=%d", ma_level
+        )
         if not ma_features:
             available = sorted(
                 {
@@ -618,9 +640,14 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             flood_gdf, input.target_crs, buildings_gdf
         )
 
+        logger.info(
+            "hazard_ma_pipeline: %d buildings, %d street features, %d flood features (level_cm=%d)",
+            len(buildings_metric), len(streets_gdf), len(ma_features), ma_level,
+        )
         result_df = run_hazard_ma_pipeline(
             buildings_metric, streets_metric, flood_metric, input.hazard_parameters
         )
+        logger.debug("hazard_ma_pipeline: done")
 
         return {
             HAZARD_MOBILITY_ACCESSIBILITY: result_df[HAZARD_MOBILITY_ACCESSIBILITY]
@@ -678,12 +705,18 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             partial_frames.append(pd.DataFrame(step_columns))
 
         merged_df = pd.concat(partial_frames, axis=1)
-        
+
         # Ensure index is string dtype for consistent lookups
         merged_df.index = merged_df.index.astype(str)
+        logger.info("merge_results: merging results for %d buildings", len(merged_df))
         risk_df = run_risk_pipeline(merged_df, input.risk_weights)
+        logger.debug("merge_results: risk scores computed")
         classified: ClassificationResult = run_classification_pipeline(
             risk_df,
+            input.n_classification_iterations,
+        )
+        logger.info(
+            "merge_results: classification done (%d iterations)",
             input.n_classification_iterations,
         )
 
