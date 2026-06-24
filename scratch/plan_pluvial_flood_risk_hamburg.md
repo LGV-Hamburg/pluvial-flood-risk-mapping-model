@@ -13,7 +13,7 @@
 | 0: Process description update | ✅ Complete | Added `{href, type}` reference branches to buildings, streets, flood_layers |
 | 1: OGC Features paging + SSRF | ✅ Complete | `src/pluvial_flood_risk/io/remote.py` — async parallel paging via itemCount, SSRF allowlist, FlatGeobuf decode, semaphore rate-limiting |
 | 2: Input model updates | ✅ Complete | `GlobalStats`; `ProcessInputs.calculation_boundary`; typed geojson-pydantic `FeatureCollection` aliases; `late_validate` + `resolve_remote_inputs` on `PluvialFloodRiskProcess`; `fetch_flatgeobuf` in io layer |
-| 3: Global-stat refactors | Pending | `topsis.py` / `vulnerability.py` — injectable stats for partitionable runs |
+| 3: Global-stat refactors | Pending | `topsis.py` / `vulnerability.py` — `TopsisStats` (per-step) + `GlobalStats` (full pipeline); injectable for partitioned runs |
 | 4: Hamburg process | Pending | `PluvialFloodRiskHamburg(BaseParallelProcess)` + `split_inputs` / `execute_single` / `merge_results` |
 | 5: Hamburg YAML + registration | Pending | Process description + Django/FastAPI route registration |
 | 6: Binary output | Pending | `PfRiskHamburgResult(BaseProcessResult)` + serializers |
@@ -189,7 +189,7 @@ def fetch_ogc_features(
   objects only**. FlatGeobuf is supported exclusively via URL download — there is
   no inline base64 FlatGeobuf path.
 - Added `calculation_boundary: dict | None` (optional Polygon/MultiPolygon GeoJSON).
-- Added `GlobalStats` dataclass (`l2_norms`, `ideal_max`, `ideal_min`, `svi_mean`).
+- Added `GlobalStats` dataclass (placeholder — **superseded by Phase 3**; correct definition is three per-step `TopsisStats` instances plus `svi_mean`).
 - Added typed `FeatureCollection` aliases using `geojson-pydantic`:
   `BuildingsFeatureCollection`, `StreetsFeatureCollection`,
   `FloodLayersFeatureCollection`, `StatisticalUnitsFeatureCollection`.
@@ -216,30 +216,132 @@ def fetch_ogc_features(
    where downloaded data is structurally validated.
 
 ### Phase 3 — refactor global-stat functions (back-compatible)
-**Edit:** `topsis.py`, `vulnerability.py`
+**Edit:** `topsis.py`, `vulnerability.py`, `models/inputs.py`
+
+#### Why `GlobalStats` as defined in Phase 2 is wrong
+
+The vulnerability pipeline calls `topsis()` **three times**, each on a matrix with a
+different number of columns:
+
+| Step | Function | Columns | n_criteria |
+|------|----------|---------|------------|
+| 1.1 | `compute_sensitivity` | children_under_10, elderly_singles_over_65 [, single_parents] | 2 or 3 |
+| 1.2 | `compute_coping_capacity` | social_welfare_recipients, no_highschool_diploma | 2 |
+| 1.3 | `compute_svi` | sensitivity_index, coping_capacity_index | 2 |
+
+Each call produces its own L2 norms, ideal_max, and ideal_min of length `n_criteria`
+for **that step**. A single flat `l2_norms: np.ndarray` cannot hold all three —
+the arrays have different lengths and different semantics. The Phase 2 `GlobalStats`
+placeholder must be replaced.
+
+#### Correct object hierarchy
 
 ```python
-# topsis.py
+# models/inputs.py  (replaces the Phase 2 GlobalStats placeholder)
+
 @dataclass(frozen=True)
 class TopsisStats:
-    l2_norms: np.ndarray      # per criterion
-    ideal_max: np.ndarray
-    ideal_min: np.ndarray
+    """Global stats needed to replay one TOPSIS step on a data partition.
 
-def compute_topsis_stats(matrix: np.ndarray, weights: np.ndarray) -> TopsisStats: ...
+    Computed from the full (city-wide) decision matrix for that step.
+    Arrays have length == n_criteria for the specific TOPSIS invocation.
 
-def topsis(matrix, weights, *, stats: TopsisStats | None = None, apply_entropy=True):
-    # stats is None -> compute from matrix (current behaviour, unchanged for old process)
+    l2_norms   : sqrt(sum(M[:,j]**2))  — used in Step 1 to normalise columns
+    ideal_max  : col-wise max of normalised+weighted M  — used in Step 2
+    ideal_min  : col-wise min of normalised+weighted M  — used in Step 2
+    """
+    l2_norms: np.ndarray    # shape (n_criteria,)
+    ideal_max: np.ndarray   # shape (n_criteria,)  — after normalisation+weighting
+    ideal_min: np.ndarray   # shape (n_criteria,)  — after normalisation+weighting
 
-# vulnerability.py
-def flood_susceptibility_transform(svi, threshold_fraction, exponent,
-                                   *, svi_mean: float | None = None):
-    # svi_mean injected for partitioned runs; falls back to valid.mean() when None
+@dataclass(frozen=True)
+class GlobalStats:
+    """All city-wide statistics needed to run the vulnerability pipeline
+    on a data partition without introducing partition-boundary bias.
 
-def run_vulnerability_pipeline(df, params, *, global_stats: GlobalStats | None = None): ...
+    Computed once in split_inputs() on the full building dataset.
+    Injected verbatim into each execute_single() work item.
+    """
+    sensitivity: TopsisStats       # step 1.1 — n_criteria = 2 or 3
+    coping_capacity: TopsisStats   # step 1.2 — n_criteria = 2
+    svi: TopsisStats               # step 1.3 — n_criteria = 2
+    svi_mean: float                # step 1.4 — city-wide mean(SVI) for threshold floor
 ```
 
-`classification.py` is **unchanged** — head/tail breaks run once in `merge_results`.
+#### Changes to `topsis.py`
+
+```python
+def compute_topsis_stats(
+    matrix: np.ndarray,
+    weights: np.ndarray,
+) -> TopsisStats:
+    """Run normalisation (Step 1) and ideal extraction (Step 2) on the
+    full-dataset matrix and return the stats without computing distances.
+    """
+    ...
+
+def topsis(
+    matrix: np.ndarray,
+    weights: np.ndarray,
+    *,
+    stats: TopsisStats | None = None,
+    apply_entropy: bool = True,
+) -> np.ndarray:
+    # When stats is None: compute norms and ideals from matrix (current behaviour,
+    # unchanged for the existing scatter process).
+    # When stats is provided: use injected norms and ideals instead — the partition
+    # matrix is normalised with city-wide norms, distances are measured against
+    # city-wide ideals.
+    ...
+```
+
+#### Changes to `vulnerability.py`
+
+```python
+def flood_susceptibility_transform(
+    svi: pd.Series,
+    threshold_fraction: float,
+    exponent: float,
+    *,
+    svi_mean: float | None = None,   # injected for partitioned runs
+) -> pd.Series:
+    # When svi_mean is None: compute from svi.dropna().mean() (current behaviour).
+    # When provided: use the city-wide mean — avoids partition skew.
+    ...
+
+def compute_global_stats(
+    df: pd.DataFrame,
+    params: VulnerabilityParams,
+) -> GlobalStats:
+    """Compute all city-wide statistics required for partitioned vulnerability runs.
+
+    Runs steps 1.1–1.3 on the full DataFrame to extract TopsisStats for each
+    TOPSIS invocation, then runs step 1.4 to obtain the city-wide SVI mean.
+    The full pipeline result (with SVI column) is NOT returned — call
+    run_vulnerability_pipeline() separately for the actual output columns.
+    """
+    ...
+
+def run_vulnerability_pipeline(
+    df: pd.DataFrame,
+    params: VulnerabilityParams,
+    *,
+    global_stats: GlobalStats | None = None,
+) -> pd.DataFrame:
+    # When global_stats is None: each TOPSIS step computes its own norms and
+    # ideals from df (current behaviour, unchanged for the scatter process).
+    # When provided: each step receives its per-step TopsisStats and svi_mean.
+    ...
+```
+
+#### `classification.py` — unchanged
+Head/tail breaks always run once in `merge_results` on the full merged dataset.
+No global-stat injection needed.
+
+#### Serialisation note
+`GlobalStats` contains numpy arrays and must be serialised to pass through Celery.
+Use `dataclasses.asdict()` + `arr.tolist()` when building the work item in
+`split_inputs`, and reconstruct with `np.array(...)` at the start of `execute_single`.
 
 ### Phase 4 — new process
 **New file:** `src/pluvial_flood_risk/processes/hamburg_process.py`
