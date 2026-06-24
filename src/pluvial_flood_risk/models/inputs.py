@@ -358,6 +358,10 @@ class BuildingProperties(BaseModel):
     id: int | str = Field(
         description="Unique building identifier (numerical or string)."
     )
+    floors_above_ground: int = Field(
+        ge=0,
+        description="Number of floors above ground (0 = ground floor only).",
+    )
     building_type: int | None = Field(
         ge=0,
         description=(
@@ -449,16 +453,16 @@ class StatisticalUnitProperties(BaseModel):
 # ---------------------------------------------------------------------------
 
 BuildingsFeatureCollection = FeatureCollection[
-    Feature[Polygon | MultiPolygon | GeometryCollection, BuildingProperties]
+    Feature[Polygon | MultiPolygon, BuildingProperties]
 ]
 StreetsFeatureCollection = FeatureCollection[
-    Feature[Polygon | MultiPolygon | GeometryCollection, StreetProperties]
+    Feature[Polygon | MultiPolygon, StreetProperties]
 ]
 FloodLayersFeatureCollection = FeatureCollection[
-    Feature[Polygon | MultiPolygon | GeometryCollection, FloodLayerProperties]
+    Feature[Polygon | MultiPolygon, FloodLayerProperties]
 ]
 StatisticalUnitsFeatureCollection = FeatureCollection[
-    Feature[Polygon | MultiPolygon | GeometryCollection, StatisticalUnitProperties]
+    Feature[Polygon | MultiPolygon, StatisticalUnitProperties]
 ]
 
 
