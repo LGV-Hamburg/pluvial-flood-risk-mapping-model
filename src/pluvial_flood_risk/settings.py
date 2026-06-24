@@ -18,8 +18,15 @@ class PfrSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="PFR_", case_sensitive=False)
 
-    max_parallel_requests: int = 100
-    """Maximum number of async requests allowed."""
+    max_parallel_requests: int = 10
+    """Maximum number of concurrent HTTP requests allowed when downloading
+    remote inputs (semaphore passed to ``fetch_all_references``).
+
+    Lower values reduce load on upstream OGC API servers at the cost of
+    slower downloads for large datasets.  Default ``10``.
+
+    Set ``PFR_MAX_PARALLEL_REQUESTS=<n>`` to override.
+    """
 
     drop_invalid_input_features: bool = False
     """When *True*, features that fail validation (missing required properties

@@ -314,7 +314,11 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         allowed_origins = self._load_allowed_origins()
 
         ref_map = {key: inputs[key] for key in references}
-        resolved = fetch_all_references(ref_map, allowed_origins=allowed_origins)
+        resolved = fetch_all_references(
+            ref_map,
+            allowed_origins=allowed_origins,
+            max_concurrent_requests=settings.max_parallel_requests,
+        )
         for key, data in resolved.items():
             logger.info(
                 "Resolved '%s': %d features",
