@@ -709,9 +709,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             )
 
         input = ProcessInputs.from_exec_body(exec_body)
-        
-        output: ProcessOutputs | None = ProcessOutputs.model_validate(
-            exec_body.get("outputs", None)
+
+        raw_outputs = exec_body.get("outputs")
+        output: ProcessOutputs | None = (
+            ProcessOutputs.model_validate(raw_outputs)
+            if raw_outputs is not None
+            else None
         )
 
         buildings_features = input.buildings["features"]
