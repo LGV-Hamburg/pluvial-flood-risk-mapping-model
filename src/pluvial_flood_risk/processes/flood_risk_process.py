@@ -23,7 +23,6 @@ import os
 from collections import Counter
 from typing import ClassVar, cast
 
-import geopandas as gpd
 import pandas as pd
 from fastprocesses import BaseProcessResult
 from fastprocesses.core.base_process import BaseScatterProcess, parallel_step
@@ -75,7 +74,6 @@ from ..models.inputs import (
     BuildingsFeatureCollection,
     FloodLayerProperties,
     FloodLayersFeatureCollection,
-    PipelineParams,
     ProcessInputs,
     ProcessOutputs,
     StatisticalUnitProperties,
@@ -83,7 +81,7 @@ from ..models.inputs import (
     StreetProperties,
     StreetsFeatureCollection,
 )
-from ..serialization import serialize_output_value
+from ..serialization import build_enriched_features, serialize_output_value
 from ..settings import settings
 from ..spatial_utils import (
     convert_geojson_to_gdf,
@@ -720,11 +718,10 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         enriched_features = None
         source_buildings_gdf = None
         if want_risk_buildings or want_voronoi:
-            enriched_features, source_buildings_gdf = (
-                self._build_enriched_features_and_bld_gdf(
-                    buildings_features, classified, input,
-                    output_columns, candidate_cols
-                )
+            enriched_features, source_buildings_gdf = build_enriched_features(
+                buildings_features, classified, input,
+                output_columns, candidate_cols,
+                _INPUT_BUILDING_OUTPUT_COLUMNS,
             )
 
         risk_buildings = {
@@ -803,63 +800,4 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
         ]
 
-    def _build_enriched_features_and_bld_gdf(
-        self,
-        source_features: list[dict],
-        classified: ClassificationResult,
-        input: PipelineParams,
-        output_columns: list[str],
-        candidate_cols: list[str],
-    ) -> tuple[list[dict], gpd.GeoDataFrame]:
-        """Return (enriched_features, buildings_gdf) for downstream outputs.
 
-        Attaches numeric columns from `classified.data` to the GeoDataFrame
-        and serialises the building features according to `inputs.output_settings`.
-        """
-        buildings_gdf = convert_geojson_to_gdf(source_features, input.target_crs)
-
-        if "id" in buildings_gdf.columns:
-            buildings_gdf = buildings_gdf.set_index("id")
-        buildings_gdf.index = buildings_gdf.index.astype(str)
-
-        classified_df = classified.data.copy()
-        classified_df.index = classified_df.index.astype(str)
-        
-        for col in candidate_cols:
-            if col in classified_df.columns:
-                buildings_gdf[col] = classified_df[col].reindex(
-                    buildings_gdf.index
-                ).values
-
-        enriched_features = []
-        for feature in source_features:
-            feature_id = feature.get("id") or feature.get("properties", {}).get("id")
-            if feature_id is None:
-                raise ValueError(
-                    "Each building feature must provide an " \
-                    "id either at the feature top level or in properties.id."
-                )
-            building_id = str(feature_id)
-            if building_id not in classified.data.index:
-                raise ValueError(
-                    f"Missing merged results for building id {building_id!r}."
-                )
-            
-            source_properties = feature.get("properties", {})
-            
-            if input.output_settings.include_input_building_properties:
-                properties = {
-                    column: source_properties[column]
-                    for column in _INPUT_BUILDING_OUTPUT_COLUMNS
-                    if column in source_properties
-                }
-            else:
-                properties = {}
-            row = classified.data.loc[building_id]
-            for column in output_columns:
-                properties[column] = serialize_output_value(
-                    row[column], input.output_settings.decimal_precision
-                )
-            enriched_features.append({**feature, "properties": properties})
-
-        return enriched_features, buildings_gdf
