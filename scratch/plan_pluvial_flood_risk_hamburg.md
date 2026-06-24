@@ -444,6 +444,20 @@ Clients request compact binary with `response=raw` + a single output
    passes on the reference object, `resolve_remote_inputs` replaces it with the
    downloaded FeatureCollection, and `late_validate` catches a malformed response.
 
+
+### phase 8 - Add new outputs
+
+Dropped / incomplete input data/features:
+- buildings
+- statistical units
+
+Notes about self-intersecting/ overwise invalid geometries
+
+### phase 9 - store validated data optionally in tmp path
+
+- within k8s: data store within a PVC would allow for a faster pipeline (a cache)
+- cache could be invalidated when older than x days or weak, data willbe redownloaded then
+
 ---
 
 ## 6. New / changed files
