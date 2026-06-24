@@ -21,7 +21,6 @@ import json
 import logging
 import os
 from collections import Counter
-from pathlib import Path
 from typing import ClassVar, cast
 
 import geopandas as gpd
@@ -31,8 +30,7 @@ from fastprocesses.core.base_process import BaseScatterProcess, parallel_step
 from fastprocesses.core.models import ProcessDescription
 from fastprocesses.core.types import JobProgressCallback
 from fastprocesses.processes.process_registry import register_process
-from pydantic import ValidationError
-from referencing import Registry, Resource
+from referencing import Registry
 
 from ..algorithms.aggregations import create_thiessen_polygons
 from ..algorithms.classification import (
@@ -92,6 +90,7 @@ from ..spatial_utils import (
     join_statistical_unit_attributes,
     project_crs_to_metric,
 )
+from ..validation import drop_invalid_features, load_schema_file
 
 logger = logging.getLogger(__name__)
 
@@ -158,69 +157,8 @@ class PfRiskResult(BaseProcessResult):
 
 
 #---------------------------------------------------------------------------
-# Helpers
-#---------------------------------------------------------------------------
-
-def load_schema_file(path: str) -> Resource:
-    schema = json.loads(Path(path).read_text())
-    return Resource.from_contents(schema)
-
-
-def _drop_invalid_features(fc: dict, props_model: type, layer_name: str) -> dict:
-    """Return a new FeatureCollection with invalid features removed.
-
-    A feature is considered invalid if it is missing the ``"geometry"`` key
-    or if its properties fail validation against *props_model*.
-
-    Only called when ``PFR_DROP_INVALID_INPUT_FEATURES=true``.
-    """
-    valid_features = []
-    dropped = 0
-    for feature in fc.get("features", []):
-        if "geometry" not in feature:
-            logger.warning(
-                "late_validate: dropping '%s' feature — missing 'geometry' key",
-                layer_name,
-            )
-            dropped += 1
-            continue
-        geom_type = (feature["geometry"] or {}).get("type")
-        if geom_type == "GeometryCollection":
-            feature_id = (feature.get("properties") or {}).get("id", "<unknown>")
-            logger.warning(
-                "late_validate: dropping '%s' feature %r — "
-                "GeometryCollection cannot be guaranteed to contain only "
-                "Polygon/MultiPolygon members",
-                layer_name, feature_id,
-            )
-            dropped += 1
-            continue
-        try:
-            props_model.model_validate(feature.get("properties") or {})
-            valid_features.append(feature)
-        except ValidationError as exc:
-            feature_id = (feature.get("properties") or {}).get("id", "<unknown>")
-            logger.warning(
-                "late_validate: dropping '%s' feature %r — validation error: %s",
-                layer_name, feature_id, exc,
-            )
-            dropped += 1
-
-    if dropped:
-        logger.warning(
-            "late_validate: dropped %d/%d invalid '%s' features "
-            "(PFR_DROP_INVALID_INPUT_FEATURES=true)",
-            dropped, dropped + len(valid_features), layer_name,
-        )
-    logger.debug(
-        "late_validate: '%s' OK after dropping (%d features kept)",
-        layer_name, len(valid_features),
-    )
-    return {**fc, "features": valid_features}
-
-# ---------------------------------------------------------------------------
 # Process
-# ---------------------------------------------------------------------------
+#---------------------------------------------------------------------------
 
 
 @register_process("pluvial_flood_risk")
@@ -407,7 +345,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             if fc is None:
                 continue
             if settings.drop_invalid_input_features:
-                inputs[layer_name] = _drop_invalid_features(fc, props_model, layer_name)
+                inputs[layer_name] = drop_invalid_features(fc, props_model, layer_name)
             else:
                 fc_model.model_validate(fc)
                 logger.debug(
