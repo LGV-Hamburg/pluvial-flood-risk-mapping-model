@@ -4,15 +4,16 @@ from .inputs import (
     BuildingsFeatureCollection,
     FloodLayerProperties,
     FloodLayersFeatureCollection,
-    GlobalStats,
     StatisticalUnitProperties,
     StatisticalUnitsFeatureCollection,
     StreetProperties,
     StreetsFeatureCollection,
 )
+from .pipeline import GlobalStats, TopsisStats
 
 __all__ = [
     "GlobalStats",
+    "TopsisStats",
     "BuildingProperties",
     "BuildingsFeatureCollection",
     "StreetProperties",

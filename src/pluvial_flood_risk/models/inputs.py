@@ -7,9 +7,6 @@ the paper.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-import numpy as np
 from geojson_pydantic import Feature, FeatureCollection
 from geojson_pydantic.geometries import GeometryCollection, MultiPolygon, Polygon
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -464,52 +461,6 @@ FloodLayersFeatureCollection = FeatureCollection[
 StatisticalUnitsFeatureCollection = FeatureCollection[
     Feature[Polygon | MultiPolygon, StatisticalUnitProperties]
 ]
-
-
-# ---------------------------------------------------------------------------
-# Global statistics (for partitionable computation)
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class GlobalStats:
-    """Computed global statistics for partitionable pipeline steps.
-
-    These values are computed once on the full building dataset by the coordinator
-    (split_inputs in BaseParallelProcess) and injected into each worker task. This
-    ensures that vulnerability and classification steps use consistent global
-    reference points regardless of how data is partitioned.
-
-    Attributes
-    ----------
-    l2_norms : np.ndarray
-        L2 norm for each TOPSIS criterion column.
-        Computed as sqrt(sum(M[:, j]**2)) where M is the decision matrix.
-        Used to normalize columns in TOPSIS (Step 1: Sensitivity, Coping Capacity, SVI).
-    ideal_max : np.ndarray
-        Maximum value per TOPSIS criterion column (benefit criteria).
-        Computed as M[:, j].max() over all buildings.
-        Used to calculate distance to ideal solution in TOPSIS.
-    ideal_min : np.ndarray
-        Minimum value per TOPSIS criterion column (cost criteria).
-        Computed as M[:, j].min() over all buildings.
-        Used to calculate distance to worst solution in TOPSIS.
-    svi_mean : float
-        Mean SVI across all buildings (after Step 1.3 TOPSIS).
-        Used as a threshold for the flood sensitivity transform (Step 1.4, Eq. 7):
-        SV_PF = (SV + threshold_fraction * svi_mean) ** exponent.
-
-    Notes
-    -----
-    - TOPSIS criteria are benefit (higher = better) by convention in the paper.
-    - If criteria were cost (lower = better), ideal_max and ideal_min would swap roles.
-    - Global stats make partitions reproducible and equivalent to city-wide computation.
-    - All numeric fields are float64 numpy arrays or Python floats for JSON serialization.
-    """
-    l2_norms: np.ndarray  # shape: (n_criteria,)
-    ideal_max: np.ndarray  # shape: (n_criteria,)
-    ideal_min: np.ndarray  # shape: (n_criteria,)
-    svi_mean: float
 
 
 # ---------------------------------------------------------------------------
