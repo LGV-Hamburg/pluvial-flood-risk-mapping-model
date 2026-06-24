@@ -152,7 +152,7 @@ def vulnerability_result(
 ) -> pd.DataFrame:
     """Output of the vulnerability pipeline on the example buildings."""
     params = PipelineParams()
-    return run_vulnerability_pipeline(buildings_gdf, params.vulnerability)
+    return run_vulnerability_pipeline(buildings_gdf, params.vulnerability_parameters)
 
 
 @pytest.fixture(scope="module")
@@ -978,7 +978,7 @@ def risk_result(
     """
     params = PipelineParams()
 
-    vuln_df = run_vulnerability_pipeline(buildings_gdf, params.vulnerability)
+    vuln_df = run_vulnerability_pipeline(buildings_gdf, params.vulnerability_parameters)
 
     from pluvial_flood_risk.algorithms.exposure import run_exposure_pipeline
 
@@ -986,7 +986,7 @@ def risk_result(
 
     from pluvial_flood_risk.algorithms.hazard_wb import run_hazard_wb_pipeline
 
-    hwb_df = run_hazard_wb_pipeline(buildings_gdf, flood_all_gdf, params.hazard)
+    hwb_df = run_hazard_wb_pipeline(buildings_gdf, flood_all_gdf, params.hazard_parameters)
 
     from pluvial_flood_risk.algorithms.hazard_ma import run_hazard_ma_pipeline
 
@@ -996,7 +996,7 @@ def risk_result(
         .set_crs("EPSG:4326")
         .to_crs("EPSG:25832")
     )
-    hma_df = run_hazard_ma_pipeline(buildings_gdf, streets_gdf, flood_30, params.hazard)
+    hma_df = run_hazard_ma_pipeline(buildings_gdf, streets_gdf, flood_30, params.hazard_parameters)
 
     merged = pd.concat(
         [

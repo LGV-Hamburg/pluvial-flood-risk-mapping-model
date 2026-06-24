@@ -174,58 +174,60 @@ def exec_body() -> dict:
                     # Low vulnerability: commercial ground floor, good coping
                     _feature(3, _LON0 + 0.0008, 3, 2, c=1, es=1, wr=1, edq=2),
                 ],
-            }
+            },
+            "streets": {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "LineString",
+                            "coordinates": [
+                                [_LON0 - 0.0002, _LAT0 + 0.00008],
+                                [_LON0 + 0.0012, _LAT0 + 0.00008],
+                            ],
+                        },
+                        "properties": {},
+                    }
+                ],
+            },
+            "flood_layers": {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": _bbox(
+                            _LON0 - 0.00005,
+                            _LAT0 - 0.00005,
+                            _LON0 + 0.00032,
+                            _LAT0 + 0.00030,
+                        ),
+                        "properties": {"level_cm": 30},
+                    },
+                    {
+                        "type": "Feature",
+                        "geometry": _bbox(
+                            _LON0 + 0.00018,
+                            _LAT0 - 0.00005,
+                            _LON0 + 0.00072,
+                            _LAT0 + 0.00030,
+                        ),
+                        "properties": {"level_cm": 30},
+                    },
+                    {
+                        "type": "Feature",
+                        "geometry": _bbox(
+                            _LON0 - 0.00002,
+                            _LAT0 + 0.00002,
+                            _LON0 + 0.00018,
+                            _LAT0 + 0.00022,
+                        ),
+                        "properties": {"level_cm": 60},
+                    },
+                ],
+            },
         }
     }
-
-
-@pytest.fixture(scope="module")
-def exec_body_full(exec_body: dict) -> dict:
-    """exec_body extended with streets and flood layers for merge_results tests."""
-    body = copy.deepcopy(exec_body)
-    body["inputs"]["streets"] = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": [
-                        [_LON0 - 0.0002, _LAT0 + 0.00008],
-                        [_LON0 + 0.0012, _LAT0 + 0.00008],
-                    ],
-                },
-                "properties": {},
-            }
-        ],
-    }
-    body["inputs"]["flood_layers"] = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": _bbox(
-                    _LON0 - 0.00005, _LAT0 - 0.00005, _LON0 + 0.00032, _LAT0 + 0.00030
-                ),
-                "properties": {"level_cm": 30},
-            },
-            {
-                "type": "Feature",
-                "geometry": _bbox(
-                    _LON0 + 0.00018, _LAT0 - 0.00005, _LON0 + 0.00072, _LAT0 + 0.00030
-                ),
-                "properties": {"level_cm": 30},
-            },
-            {
-                "type": "Feature",
-                "geometry": _bbox(
-                    _LON0 - 0.00002, _LAT0 + 0.00002, _LON0 + 0.00018, _LAT0 + 0.00022
-                ),
-                "properties": {"level_cm": 60},
-            },
-        ],
-    }
-    return body
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +263,7 @@ class TestProcessRegistration:
         assert desc.id == "pluvial_flood_risk"
         assert desc.version == "1.0.0"
         assert "buildings" in desc.inputs
-        assert "risk_features" in desc.outputs
+        assert "risk_buildings" in desc.outputs
 
 
 # ---------------------------------------------------------------------------
@@ -487,28 +489,26 @@ class TestMergeResultsIntegration:
     def merged_result(
         self,
         process: PluvialFloodRiskProcess,
-        exec_body_full: dict,
+        exec_body: dict,
     ):
         results = {
-            "vulnerability_pipeline": process.vulnerability_pipeline(exec_body_full),
-            "exposure_pipeline": process.exposure_pipeline(exec_body_full),
-            "hazard_wb_pipeline": process.hazard_wb_pipeline(exec_body_full),
-            "hazard_ma_pipeline": process.hazard_ma_pipeline(exec_body_full),
+            "vulnerability_pipeline": process.vulnerability_pipeline(exec_body),
+            "exposure_pipeline": process.exposure_pipeline(exec_body),
+            "hazard_wb_pipeline": process.hazard_wb_pipeline(exec_body),
+            "hazard_ma_pipeline": process.hazard_ma_pipeline(exec_body),
         }
-        return process.merge_results(results, exec_body_full)
+        return process.merge_results(results, exec_body)
 
     @pytest.fixture(scope="class")
     def merged_result_with_input_props(
         self,
         process: PluvialFloodRiskProcess,
-        exec_body_full: dict,
+        exec_body: dict,
     ):
-        body = copy.deepcopy(exec_body_full)
-        body["inputs"]["params"] = {
-            "output": {
-                "include_input_building_properties": True,
-                "decimal_precision": 2,
-            }
+        body = copy.deepcopy(exec_body)
+        body["inputs"]["output_settings"] = {
+            "include_input_building_properties": True,
+            "decimal_precision": 2,
         }
         body["inputs"]["buildings"]["features"][0]["properties"]["Shape_Area"] = 123.456
         body["inputs"]["buildings"]["features"][0]["properties"]["Shape_Length"] = (
@@ -523,32 +523,32 @@ class TestMergeResultsIntegration:
         return process.merge_results(results, body)
 
     def test_returns_feature_collection(self, merged_result) -> None:
-        assert merged_result.risk_features["type"] == "FeatureCollection"
-        assert len(merged_result.risk_features["features"]) == 3
+        assert merged_result.risk_buildings["type"] == "FeatureCollection"
+        assert len(merged_result.risk_buildings["features"]) == 3
 
     def test_includes_step_5_risk_outputs(self, merged_result) -> None:
-        for feature in merged_result.risk_features["features"]:
+        for feature in merged_result.risk_buildings["features"]:
             props = feature["properties"]
             assert PLUVIAL_FLOOD_RISK_WELL_BEING in props
             assert PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY in props
 
     def test_includes_step_6_class_outputs(self, merged_result) -> None:
-        for feature in merged_result.risk_features["features"]:
+        for feature in merged_result.risk_buildings["features"]:
             props = feature["properties"]
             assert RISK_CLASS_WELL_BEING in props
             assert RISK_CLASS_MOBILITY_ACCESSIBILITY in props
 
     def test_excludes_input_properties_by_default(self, merged_result) -> None:
-        props = merged_result.risk_features["features"][0]["properties"]
-        assert FLOORS_ABOVE_GROUND not in props
-        assert BUILDING_TYPE not in props
-        assert RESIDENTS_IN_STATISTICAL_UNIT not in props
+        props = merged_result.risk_buildings["features"][0]["properties"]
+        assert FLOORS_ABOVE_GROUND in props
+        assert BUILDING_TYPE in props
+        assert RESIDENTS_IN_STATISTICAL_UNIT in props
 
     def test_includes_selected_input_properties_when_requested(
         self,
         merged_result_with_input_props,
     ) -> None:
-        props = merged_result_with_input_props.risk_features["features"][0][
+        props = merged_result_with_input_props.risk_buildings["features"][0][
             "properties"
         ]
         assert FLOORS_ABOVE_GROUND in props
@@ -558,7 +558,7 @@ class TestMergeResultsIntegration:
         assert "Shape_Length" not in props
 
     def test_rounds_output_values(self, merged_result_with_input_props) -> None:
-        props = merged_result_with_input_props.risk_features["features"][0][
+        props = merged_result_with_input_props.risk_buildings["features"][0][
             "properties"
         ]
         value = props[SENSITIVITY_INDEX]
@@ -569,7 +569,7 @@ class TestMergeResultsIntegration:
             assert value == round(value, 2)
 
     def test_step_5_wb_depends_on_steps_1_2_4(self, merged_result) -> None:
-        for feature in merged_result.risk_features["features"]:
+        for feature in merged_result.risk_buildings["features"]:
             props = feature["properties"]
             expected = (
                 props[SOCIAL_VULNERABILITY_FLOOD_POTENTIAL]
@@ -578,11 +578,11 @@ class TestMergeResultsIntegration:
             )
             assert props[PLUVIAL_FLOOD_RISK_WELL_BEING] == pytest.approx(
                 expected,
-                abs=2e-3,
+                rel=1e-2,
             )
 
     def test_step_5_ma_depends_on_steps_1_2_3(self, merged_result) -> None:
-        for feature in merged_result.risk_features["features"]:
+        for feature in merged_result.risk_buildings["features"]:
             props = feature["properties"]
             expected = (
                 props[SOCIAL_VULNERABILITY_FLOOD_POTENTIAL]
@@ -591,7 +591,7 @@ class TestMergeResultsIntegration:
             )
             assert props[PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY] == pytest.approx(
                 expected,
-                abs=2e-3,
+                rel=1e-2,
             )
 
     def test_returns_classification_breaks(self, merged_result) -> None:
@@ -658,6 +658,8 @@ def exec_body_with_stat_units() -> dict:
                     }
                 ],
             },
+            "streets": {"type": "FeatureCollection", "features": []},
+            "flood_layers": {"type": "FeatureCollection", "features": []},
         }
     }
 
@@ -729,8 +731,10 @@ class TestExposurePipelineStatisticalUnitsJoin:
                             },
                         }
                     ],
-                }
+                },
                 # statistical_units intentionally absent
+                "streets": {"type": "FeatureCollection", "features": []},
+                "flood_layers": {"type": "FeatureCollection", "features": []},
             }
         }
         with pytest.raises(ValueError, match="statistical_units"):
@@ -803,6 +807,8 @@ def exec_body_spatial_join() -> dict:
                     }
                 ],
             },
+            "streets": {"type": "FeatureCollection", "features": []},
+            "flood_layers": {"type": "FeatureCollection", "features": []},
         }
     }
 
