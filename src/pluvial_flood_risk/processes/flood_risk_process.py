@@ -85,8 +85,13 @@ from ..models.inputs import (
     StreetProperties,
     StreetsFeatureCollection,
 )
+from ..serialization import serialize_output_value
 from ..settings import settings
-from ..spatial_utils import join_statistical_unit_attributes
+from ..spatial_utils import (
+    convert_geojson_to_gdf,
+    join_statistical_unit_attributes,
+    project_crs_to_metric,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -413,107 +418,6 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         return True
 
     # ------------------------------------------------------------------
-    # CRS helper
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _project_crs_to_metric(
-        gdf: gpd.GeoDataFrame,
-        target_crs: str | None,
-        fallback_gdf: gpd.GeoDataFrame | None = None,
-    ) -> gpd.GeoDataFrame:
-        """Project *gdf* to a metric CRS and return the result.
-
-        Resolution order:
-        1. ``target_crs`` from params — used as-is (must be a projected CRS).
-        2. Input already projected — keep its CRS unchanged.
-        3. Input geographic (degrees) — auto-detect UTM zone from *gdf* centroid,
-           or from *fallback_gdf* centroid when *gdf* is empty (e.g. an empty
-           flood layer).
-
-        Parameters
-        ----------
-        gdf:
-            GeoDataFrame to project.  ``crs`` must be set.
-        target_crs:
-            Explicit CRS string (e.g. ``'EPSG:25832'``) or ``None``.
-        fallback_gdf:
-            Optional GeoDataFrame used for UTM estimation when *gdf* is empty.
-        """
-        if target_crs is not None:
-            return gdf.to_crs(target_crs)
-        if gdf.crs is not None and gdf.crs.is_projected:
-            return gdf  # already metric — no reprojection needed
-        
-        # Geographic CRS (e.g. EPSG:4326) → estimate UTM zone
-        reference = gdf if not gdf.empty else (fallback_gdf or gdf)
-        utm = reference.estimate_utm_crs()
-        return gdf.to_crs(utm)
-
-    @staticmethod
-    def _convert_geojson_to_gdf(
-        features: list, source_crs: str | None = None
-    ) -> gpd.GeoDataFrame:
-        """Parse a GeoJSON features list into a GeoDataFrame.
-
-        Parameters
-        ----------
-        features:
-            GeoJSON feature list from a FeatureCollection.
-        source_crs:
-            CRS to assign when no CRS is embedded in the features.  Pass
-            ``params.target_crs`` whenever the input coordinates are already
-            in a projected system (e.g. ``'EPSG:25832'``).  Defaults to
-            ``'EPSG:4326'`` for standard WGS-84 GeoJSON.
-        """
-        # geopandas handles {"geometry": null} but crashes on a missing "geometry"
-        # key entirely. Normalize missing keys to null so rows are preserved with
-        # a None geometry (same behaviour as explicit null, skipped in overlays).
-        missing = sum(1 for f in features if "geometry" not in f)
-        if missing:
-            logger.warning(
-                "_convert_geojson_to_gdf: %d/%d features missing 'geometry' key; "
-                "normalizing to null geometry",
-                missing, len(features),
-            )
-            features = [
-                f if "geometry" in f else {**f, "geometry": None}
-                for f in features
-            ]
-        gdf = gpd.GeoDataFrame.from_features(features)
-        if gdf.crs is None:
-            gdf = gdf.set_crs(source_crs or "EPSG:4326")
-        invalid_mask = gdf.geometry.notna() & ~gdf.geometry.is_valid
-        if invalid_mask.any():
-            logger.warning(
-                "_convert_geojson_to_gdf: %d/%d geometries are invalid "
-                "(e.g. self-intersecting); repairing with make_valid()",
-                invalid_mask.sum(), len(gdf),
-            )
-            gdf.geometry = gdf.geometry.make_valid()
-        return gdf
-
-    @staticmethod
-    def _json_scalar(value):
-        """Convert pandas / numpy scalars to JSON-safe Python values."""
-        if pd.isna(value):
-            return None
-        if hasattr(value, "item"):
-            return value.item()
-        return value
-
-    @classmethod
-    def _serialize_output_value(cls, value, decimal_precision: int | None):
-        """Convert output values to JSON-safe scalars with optional rounding."""
-        scalar = cls._json_scalar(value)
-        if scalar is None or decimal_precision is None:
-            return scalar
-        if isinstance(scalar, float):
-            rounded = round(scalar, decimal_precision)
-            return 0.0 if rounded == 0 else rounded
-        return scalar
-
-    # ------------------------------------------------------------------
     # Parallel branches
     #
     # Each @parallel_step runs on its own Celery worker and receives the
@@ -555,11 +459,11 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
 
         if indicators_missing and input.statistical_units is not None:
             # Parse as GeoDataFrame to do the spatial/attribute join
-            gdf = self._convert_geojson_to_gdf(buildings_features, input.target_crs)
-            gdf_metric = self._project_crs_to_metric(gdf, input.target_crs)
+            gdf = convert_geojson_to_gdf(buildings_features, input.target_crs)
+            gdf_metric = project_crs_to_metric(gdf, input.target_crs)
             gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
 
-            stat_gdf = self._convert_geojson_to_gdf(
+            stat_gdf = convert_geojson_to_gdf(
                 input.statistical_units["features"], input.target_crs
             )
             gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
@@ -600,10 +504,10 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         """
         input = ProcessInputs.from_exec_body(exec_body)
 
-        gdf = self._convert_geojson_to_gdf(
+        gdf = convert_geojson_to_gdf(
             input.buildings["features"], input.target_crs
         )
-        gdf_metric = self._project_crs_to_metric(gdf, input.target_crs)
+        gdf_metric = project_crs_to_metric(gdf, input.target_crs)
         gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
 
         residents_missing = RESIDENTS_IN_STATISTICAL_UNIT not in gdf_metric.columns
@@ -625,7 +529,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "'statistical_units' FeatureCollection input for automatic "
                     "joining."
                 )
-            stat_gdf = self._convert_geojson_to_gdf(
+            stat_gdf = convert_geojson_to_gdf(
                 input.statistical_units["features"], input.target_crs
             )
             gdf_metric = join_statistical_unit_attributes(gdf_metric, stat_gdf)
@@ -673,17 +577,17 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         inp = ProcessInputs.from_exec_body(exec_body)
         params = inp
 
-        buildings_gdf = self._convert_geojson_to_gdf(
+        buildings_gdf = convert_geojson_to_gdf(
             inp.buildings["features"], params.target_crs
         )
-        buildings_metric = self._project_crs_to_metric(buildings_gdf, params.target_crs)
+        buildings_metric = project_crs_to_metric(buildings_gdf, params.target_crs)
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
-        flood_gdf = self._convert_geojson_to_gdf(
+        flood_gdf = convert_geojson_to_gdf(
             inp.flood_layers["features"], params.target_crs
         )
-        flood_metric = self._project_crs_to_metric(
+        flood_metric = project_crs_to_metric(
             flood_gdf, params.target_crs, buildings_gdf
         )
 
@@ -716,17 +620,17 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         """
         input = ProcessInputs.from_exec_body(exec_body)
 
-        buildings_gdf = self._convert_geojson_to_gdf(
+        buildings_gdf = convert_geojson_to_gdf(
             input.buildings["features"], input.target_crs
         )
-        buildings_metric = self._project_crs_to_metric(buildings_gdf, input.target_crs)
+        buildings_metric = project_crs_to_metric(buildings_gdf, input.target_crs)
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
-        streets_gdf = self._convert_geojson_to_gdf(
+        streets_gdf = convert_geojson_to_gdf(
             input.streets["features"], input.target_crs
         )
-        streets_metric = self._project_crs_to_metric(
+        streets_metric = project_crs_to_metric(
             streets_gdf, input.target_crs, buildings_gdf
         )
 
@@ -752,9 +656,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 f"'flood_layers'. Available levels: {available}"
             )
         
-        flood_gdf = self._convert_geojson_to_gdf(ma_features, input.target_crs)
-        
-        flood_metric = self._project_crs_to_metric(
+        flood_gdf = convert_geojson_to_gdf(ma_features, input.target_crs)
+        flood_metric = project_crs_to_metric(
             flood_gdf, input.target_crs, buildings_gdf
         )
 
@@ -890,7 +793,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         # Voronoi / Thiessen tessellation (optional output)
         voronoi_diagram_fc = None
         if want_voronoi and source_buildings_gdf is not None:
-            blds_metric = self._project_crs_to_metric(
+            blds_metric = project_crs_to_metric(
                 source_buildings_gdf, input.target_crs
             )
             thiessen_gdf = create_thiessen_polygons(blds_metric)
@@ -903,7 +806,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             [
                 cast(
                     float,
-                    self._serialize_output_value(
+                    serialize_output_value(
                         value, input.output_settings.decimal_precision
                     ),
                 )
@@ -916,7 +819,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             [
                 cast(
                     float,
-                    self._serialize_output_value(
+                    serialize_output_value(
                         value, input.output_settings.decimal_precision
                     ),
                 )
@@ -972,7 +875,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         Attaches numeric columns from `classified.data` to the GeoDataFrame
         and serialises the building features according to `inputs.output_settings`.
         """
-        buildings_gdf = self._convert_geojson_to_gdf(source_features, input.target_crs)
+        buildings_gdf = convert_geojson_to_gdf(source_features, input.target_crs)
 
         if "id" in buildings_gdf.columns:
             buildings_gdf = buildings_gdf.set_index("id")
@@ -1013,7 +916,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 properties = {}
             row = classified.data.loc[building_id]
             for column in output_columns:
-                properties[column] = self._serialize_output_value(
+                properties[column] = serialize_output_value(
                     row[column], input.output_settings.decimal_precision
                 )
             enriched_features.append({**feature, "properties": properties})

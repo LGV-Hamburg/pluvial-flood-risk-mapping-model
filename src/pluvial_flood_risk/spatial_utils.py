@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 import geopandas as gpd
-import numpy as np
 import pandas as pd
 
-from .models.field_names import (
+from .models.field_names import (  # noqa: E402
     BUILDING_FOOTPRINT_AREA_M2,
     BUILDING_TYPE,
     CHILDREN_UNDER_10,
@@ -20,6 +21,7 @@ from .models.field_names import (
     STATISTICAL_UNIT_ID,
 )
 
+logger = logging.getLogger(__name__)
 # Census columns on statistical units that should be joined onto buildings
 # when absent.  Order does not matter.
 _CENSUS_COLUMNS = [
@@ -150,3 +152,85 @@ def join_statistical_unit_attributes(
         .transform("sum")
     )
     return result
+
+
+def convert_geojson_to_gdf(
+    features: list, source_crs: str | None = None
+) -> gpd.GeoDataFrame:
+    """Parse a GeoJSON features list into a GeoDataFrame.
+
+    Handles two common data quality issues transparently:
+
+    * Features missing the ``"geometry"`` key entirely (not even ``null``) are
+      normalised to ``null`` geometry so geopandas does not crash.
+    * Topologically invalid geometries (self-intersecting rings, etc.) are
+      repaired in-place via ``make_valid()``.
+
+    Parameters
+    ----------
+    features:
+        GeoJSON feature list from a FeatureCollection.
+    source_crs:
+        CRS to assign when no CRS is embedded in the features.  Pass
+        ``params.target_crs`` whenever the input coordinates are already in a
+        projected system (e.g. ``'EPSG:25832'``).  Defaults to ``'EPSG:4326'``
+        for standard WGS-84 GeoJSON.
+    """
+    missing = sum(1 for f in features if "geometry" not in f)
+    if missing:
+        logger.warning(
+            "convert_geojson_to_gdf: %d/%d features missing 'geometry' key; "
+            "normalizing to null geometry",
+            missing, len(features),
+        )
+        features = [
+            f if "geometry" in f else {**f, "geometry": None}
+            for f in features
+        ]
+    gdf = gpd.GeoDataFrame.from_features(features)
+    if gdf.crs is None:
+        gdf = gdf.set_crs(source_crs or "EPSG:4326")
+    invalid_mask = gdf.geometry.notna() & ~gdf.geometry.is_valid
+    if invalid_mask.any():
+        logger.warning(
+            "convert_geojson_to_gdf: %d/%d geometries are invalid "
+            "(e.g. self-intersecting); repairing with make_valid()",
+            invalid_mask.sum(), len(gdf),
+        )
+        gdf.geometry = gdf.geometry.make_valid()
+    return gdf
+
+
+def project_crs_to_metric(
+    gdf: gpd.GeoDataFrame,
+    target_crs: str | None,
+    fallback_gdf: gpd.GeoDataFrame | None = None,
+) -> gpd.GeoDataFrame:
+    """Project *gdf* to a metric CRS and return the result.
+
+    Resolution order:
+
+    1. ``target_crs`` from params — used as-is (must be a projected CRS).
+    2. Input already projected — keep its CRS unchanged.
+    3. Input geographic (degrees) — auto-detect UTM zone from *gdf* centroid,
+       or from *fallback_gdf* centroid when *gdf* is empty (e.g. an empty
+       flood layer).
+
+    Parameters
+    ----------
+    gdf:
+        GeoDataFrame to project.  ``crs`` must be set.
+    target_crs:
+        Explicit CRS string (e.g. ``'EPSG:25832'``) or ``None``.
+    fallback_gdf:
+        Optional GeoDataFrame used for UTM estimation when *gdf* is empty.
+    """
+    if target_crs is not None:
+        return gdf.to_crs(target_crs)
+    if gdf.crs is not None and gdf.crs.is_projected:
+        return gdf  # already metric — no reprojection needed
+    # Geographic CRS (e.g. EPSG:4326) → estimate UTM zone
+    reference = gdf if not gdf.empty else (fallback_gdf or gdf)
+    utm = reference.estimate_utm_crs()
+    return gdf.to_crs(utm)
+
