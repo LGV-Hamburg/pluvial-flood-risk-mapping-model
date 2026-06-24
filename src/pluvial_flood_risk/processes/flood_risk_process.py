@@ -73,13 +73,16 @@ from ..models.field_names import (
     STATISTICAL_UNIT_ID,
 )
 from ..models.inputs import (
+    BuildingProperties,
     BuildingsFeatureCollection,
+    FloodLayerProperties,
     FloodLayersFeatureCollection,
     PipelineParams,
     ProcessInputs,
     ProcessOutputs,
     StatisticalUnitProperties,
     StatisticalUnitsFeatureCollection,
+    StreetProperties,
     StreetsFeatureCollection,
 )
 from ..settings import settings
@@ -158,44 +161,55 @@ def load_schema_file(path: str) -> Resource:
     return Resource.from_contents(schema)
 
 
-def _drop_invalid_statistical_units(fc: dict) -> dict:
-    """Return a new FeatureCollection with invalid statistical unit features removed.
+def _drop_invalid_features(fc: dict, props_model: type, layer_name: str) -> dict:
+    """Return a new FeatureCollection with invalid features removed.
 
-    Each feature is validated individually against
-    :class:`~pluvial_flood_risk.models.inputs.StatisticalUnitProperties`.
-    Features that fail validation are logged at WARNING level and excluded from
-    the returned collection.  The caller receives a clean collection that passes
-    ``StatisticalUnitsFeatureCollection.model_validate``.
+    A feature is considered invalid if it is missing the ``"geometry"`` key
+    or if its properties fail validation against *props_model*.
 
-    Only called when ``PFR_DROP_INCOMPLETE_STATISTICAL_UNITS=true``.
+    Only called when ``PFR_DROP_INVALID_INPUT_FEATURES=true``.
     """
     valid_features = []
     dropped = 0
     for feature in fc.get("features", []):
-        try:
-            StatisticalUnitProperties.model_validate(
-                feature.get("properties") or {}
+        if "geometry" not in feature:
+            logger.warning(
+                "late_validate: dropping '%s' feature — missing 'geometry' key",
+                layer_name,
             )
+            dropped += 1
+            continue
+        geom_type = (feature["geometry"] or {}).get("type")
+        if geom_type == "GeometryCollection":
+            feature_id = (feature.get("properties") or {}).get("id", "<unknown>")
+            logger.warning(
+                "late_validate: dropping '%s' feature %r — "
+                "GeometryCollection cannot be guaranteed to contain only "
+                "Polygon/MultiPolygon members",
+                layer_name, feature_id,
+            )
+            dropped += 1
+            continue
+        try:
+            props_model.model_validate(feature.get("properties") or {})
             valid_features.append(feature)
         except ValidationError as exc:
-            unit_id = (feature.get("properties") or {}).get(
-                "statistical_unit_id", "<unknown>"
-            )
+            feature_id = (feature.get("properties") or {}).get("id", "<unknown>")
             logger.warning(
-                "late_validate: dropping statistical unit %r — validation error: %s",
-                unit_id, exc,
+                "late_validate: dropping '%s' feature %r — validation error: %s",
+                layer_name, feature_id, exc,
             )
             dropped += 1
 
     if dropped:
         logger.warning(
-            "late_validate: dropped %d/%d incomplete statistical unit features "
-            "(PFR_DROP_INCOMPLETE_STATISTICAL_UNITS=true)",
-            dropped, dropped + len(valid_features),
+            "late_validate: dropped %d/%d invalid '%s' features "
+            "(PFR_DROP_INVALID_INPUT_FEATURES=true)",
+            dropped, dropped + len(valid_features), layer_name,
         )
     logger.debug(
-        "late_validate: statistical_units OK after dropping (%d features kept)",
-        len(valid_features),
+        "late_validate: '%s' OK after dropping (%d features kept)",
+        layer_name, len(valid_features),
     )
     return {**fc, "features": valid_features}
 
@@ -373,28 +387,23 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 logger.debug(
                     "late_validate: '%s' geometry types: %s", name, dict(geom_types)
                 )
-        BuildingsFeatureCollection.model_validate(inputs["buildings"])
-        
-        logger.debug("late_validate: buildings OK (%d features)", len(inputs["buildings"].get("features", [])))
-        StreetsFeatureCollection.model_validate(inputs["streets"])
-        
-        logger.debug("late_validate: streets OK (%d features)", len(inputs["streets"].get("features", [])))
-        FloodLayersFeatureCollection.model_validate(inputs["flood_layers"])
-        
-        logger.debug("late_validate: flood_layers OK (%d features)", len(inputs["flood_layers"].get("features", [])))
-        
-        if inputs.get("statistical_units") is not None:
-            if settings.drop_incomplete_statistical_units:
-                inputs["statistical_units"] = _drop_invalid_statistical_units(
-                    inputs["statistical_units"]
-                )
+        _LAYER_VALIDATORS = [
+            ("buildings",         BuildingProperties,       BuildingsFeatureCollection),
+            ("streets",           StreetProperties,         StreetsFeatureCollection),
+            ("flood_layers",      FloodLayerProperties,     FloodLayersFeatureCollection),
+            ("statistical_units", StatisticalUnitProperties, StatisticalUnitsFeatureCollection),
+        ]
+        for layer_name, props_model, fc_model in _LAYER_VALIDATORS:
+            fc = inputs.get(layer_name)
+            if fc is None:
+                continue
+            if settings.drop_invalid_input_features:
+                inputs[layer_name] = _drop_invalid_features(fc, props_model, layer_name)
             else:
-                StatisticalUnitsFeatureCollection.model_validate(
-                    inputs["statistical_units"]
-                )
+                fc_model.model_validate(fc)
                 logger.debug(
-                    "late_validate: statistical_units OK (%d features)",
-                    len(inputs["statistical_units"].get("features", [])),
+                    "late_validate: '%s' OK (%d features)",
+                    layer_name, len(fc.get("features", [])),
                 )
         logger.info("late_validate: all inputs valid")
         return True
@@ -453,9 +462,31 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             in a projected system (e.g. ``'EPSG:25832'``).  Defaults to
             ``'EPSG:4326'`` for standard WGS-84 GeoJSON.
         """
+        # geopandas handles {"geometry": null} but crashes on a missing "geometry"
+        # key entirely. Normalize missing keys to null so rows are preserved with
+        # a None geometry (same behaviour as explicit null, skipped in overlays).
+        missing = sum(1 for f in features if "geometry" not in f)
+        if missing:
+            logger.warning(
+                "_convert_geojson_to_gdf: %d/%d features missing 'geometry' key; "
+                "normalizing to null geometry",
+                missing, len(features),
+            )
+            features = [
+                f if "geometry" in f else {**f, "geometry": None}
+                for f in features
+            ]
         gdf = gpd.GeoDataFrame.from_features(features)
         if gdf.crs is None:
             gdf = gdf.set_crs(source_crs or "EPSG:4326")
+        invalid_mask = gdf.geometry.notna() & ~gdf.geometry.is_valid
+        if invalid_mask.any():
+            logger.warning(
+                "_convert_geojson_to_gdf: %d/%d geometries are invalid "
+                "(e.g. self-intersecting); repairing with make_valid()",
+                invalid_mask.sum(), len(gdf),
+            )
+            gdf.geometry = gdf.geometry.make_valid()
         return gdf
 
     @staticmethod
@@ -745,7 +776,10 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
     # results = {step_name: result_dict}
     # ------------------------------------------------------------------
 
-    def merge_results(self, results: dict[str, dict], exec_body: dict) -> PfRiskResult:
+    def merge_results(
+            self, results: dict[str, dict], exec_body: dict,
+            job_progress_callback: JobProgressCallback | None = None
+        ) -> PfRiskResult:
         """Merge partial results, calculate risk indices (Eq. 14/15), classify.
 
         Args:
