@@ -75,7 +75,6 @@ from ..models.inputs import (
     FloodLayerProperties,
     FloodLayersFeatureCollection,
     ProcessInputs,
-    ProcessOutputs,
     StatisticalUnitProperties,
     StatisticalUnitsFeatureCollection,
     StreetProperties,
@@ -646,12 +645,8 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
 
         input = ProcessInputs.from_exec_body(exec_body)
 
-        raw_outputs = exec_body.get("outputs")
-        output: ProcessOutputs | None = (
-            ProcessOutputs.model_validate(raw_outputs)
-            if raw_outputs is not None
-            else None
-        )
+        # None means "outputs" was absent → produce all outputs (OGC req. 27)
+        requested = exec_body.get("outputs")
 
         buildings_features = input.buildings["features"]
 
@@ -700,14 +695,15 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             RISK_CLASS_MOBILITY_ACCESSIBILITY,
         ]
 
-        # Decide which outputs the client requested (OGC API Processes)
-        want_risk_buildings = self._is_output_requested(output, "risk_buildings")
-        want_voronoi = self._is_output_requested(output, "voronoi_diagram")
-        want_class_breaks_wb = self._is_output_requested(
-            output, "classification_breaks_wb"
+        # Decide which outputs the client requested (OGC API Processes req. 27:
+        # absent "outputs" key → produce all outputs)
+        want_risk_buildings = requested is None or "risk_buildings" in requested
+        want_voronoi = requested is None or "voronoi_diagram" in requested
+        want_class_breaks_wb = (
+            requested is None or "classification_breaks_wb" in requested
         )
-        want_class_breaks_ma = self._is_output_requested(
-            output, "classification_breaks_ma"
+        want_class_breaks_ma = (
+            requested is None or "classification_breaks_ma" in requested
         )
 
         # Candidate columns for aggregation (used by HEALPix and unit aggregation)
@@ -776,17 +772,6 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         )
 
     # ------------------------- Refactor helpers -------------------------
-    def _is_output_requested(self, outputs: ProcessOutputs | None, name: str) -> bool:
-        """Return True when the given output should be produced by this run.
-
-        Follows OGC behaviour: if no `outputs` object is present in the
-        execution body, all outputs are produced by default.
-        """
-        if outputs is None:
-            return True
-
-        return getattr(outputs, name) is not None
-
     def _candidate_agg_columns(self) -> list:
         """List of candidate columns used for aggregations."""
         return [

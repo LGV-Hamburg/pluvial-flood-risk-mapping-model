@@ -599,9 +599,3 @@ class ProcessInputs(PipelineParams):
         """
         raw: dict = exec_body["inputs"]
         return cls.model_validate(raw)
-
-class ProcessOutputs(BaseModel):
-    risk_buildings: dict | None = None
-    classification_breaks_wb: dict | None = None
-    classification_breaks_ma: dict | None = None
-    voronoi_diagram: dict | None = None
