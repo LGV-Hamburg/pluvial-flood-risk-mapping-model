@@ -374,6 +374,23 @@ inputs:
             rounding.
     minOccurs: 0
     maxOccurs: 1
+
+  calculation_boundary:
+    title: "Calculation Boundary (optional)"
+    description: >-
+      GeoJSON Polygon or MultiPolygon that restricts which buildings are
+      processed in the partitionable and local steps (exposure, hazard WB,
+      hazard MA, risk scoring, and head/tail classification).
+      Steps 1.1-1.4 (TOPSIS vulnerability) still run on the full buildings
+      dataset so that city-wide L2 norms, ideal vectors, and SVI mean are
+      statistically consistent regardless of the requested sub-region.
+      When absent, the full dataset is processed.
+    schema:
+      oneOf:
+        - "$ref": "https://geojson.org/schema/Polygon.json"
+        - "$ref": "https://geojson.org/schema/MultiPolygon.json"
+    minOccurs: 0
+    maxOccurs: 1
 #
 outputs:
   risk_buildings:
