@@ -84,6 +84,8 @@ from ..serialization import build_enriched_features, serialize_output_value
 from ..settings import settings
 from ..spatial_utils import (
     convert_geojson_to_gdf,
+    filter_features_to_boundary,
+    filter_gdf_to_boundary,
     join_statistical_unit_attributes,
     project_crs_to_metric,
 )
@@ -439,6 +441,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         """
         input = ProcessInputs.from_exec_body(exec_body)
 
+        # Build the GDF from ALL buildings first — unit-level aggregations
+        # (living_area_m2_statistical_unit groupby) must span the full unit
+        # population.  The boundary filter is applied after those aggregations.
         gdf = convert_geojson_to_gdf(
             input.buildings["features"], input.target_crs
         )
@@ -452,7 +457,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         # Join statistical unit attributes when residents are missing, or when
         # living area must be derived but no unit assignment is available.
         needs_join = residents_missing or (living_area_missing and unit_id_missing)
-        
+
         if needs_join:
             if input.statistical_units is None:
                 raise ValueError(
@@ -477,6 +482,19 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             gdf_metric[LIVING_AREA_M2_STATISTICAL_UNIT] = building_living_area.groupby(
                 gdf_metric[STATISTICAL_UNIT_ID]
             ).transform("sum")
+
+        # Apply the boundary filter now — after unit-level aggregations so that
+        # the groupby sum above is not underestimated for boundary-straddling units.
+        if input.calculation_boundary is not None:
+            _original = len(gdf_metric)
+            gdf_metric = filter_gdf_to_boundary(
+                gdf_metric, input.calculation_boundary
+            )
+            logger.info(
+                "exposure_pipeline: calculation_boundary applied "
+                "— %d/%d buildings in boundary",
+                len(gdf_metric), _original,
+            )
 
         # Recover the building id used as dict key (keep it in index).
         if "id" in gdf_metric.columns:
@@ -512,8 +530,19 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         inp = ProcessInputs.from_exec_body(exec_body)
         params = inp
 
+        buildings_features = inp.buildings["features"]
+        if inp.calculation_boundary is not None:
+            buildings_features = filter_features_to_boundary(
+                buildings_features, inp.calculation_boundary
+            )
+            logger.info(
+                "hazard_wb_pipeline: calculation_boundary applied "
+                "— %d/%d buildings in boundary",
+                len(buildings_features), len(inp.buildings["features"]),
+            )
+
         buildings_gdf = convert_geojson_to_gdf(
-            inp.buildings["features"], params.target_crs
+            buildings_features, params.target_crs
         )
         buildings_metric = project_crs_to_metric(buildings_gdf, params.target_crs)
         if "id" in buildings_metric.columns:
@@ -555,8 +584,19 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         """
         input = ProcessInputs.from_exec_body(exec_body)
 
+        buildings_features = input.buildings["features"]
+        if input.calculation_boundary is not None:
+            buildings_features = filter_features_to_boundary(
+                buildings_features, input.calculation_boundary
+            )
+            logger.info(
+                "hazard_ma_pipeline: calculation_boundary applied "
+                "— %d/%d buildings in boundary",
+                len(buildings_features), len(input.buildings["features"]),
+            )
+
         buildings_gdf = convert_geojson_to_gdf(
-            input.buildings["features"], input.target_crs
+            buildings_features, input.target_crs
         )
         buildings_metric = project_crs_to_metric(buildings_gdf, input.target_crs)
         if "id" in buildings_metric.columns:
@@ -649,6 +689,21 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         requested = exec_body.get("outputs")
 
         buildings_features = input.buildings["features"]
+        _boundary_ids: set[str] | None = None
+        if input.calculation_boundary is not None:
+            original_count = len(buildings_features)
+            buildings_features = filter_features_to_boundary(
+                buildings_features, input.calculation_boundary
+            )
+            _boundary_ids = {
+                str(f.get("id") or f["properties"].get("id"))
+                for f in buildings_features
+            }
+            logger.info(
+                "merge_results: calculation_boundary applied "
+                "— %d/%d buildings in boundary",
+                len(buildings_features), original_count,
+            )
 
         partial_frames: list[pd.DataFrame] = []
         for step_name in required_steps:
@@ -666,6 +721,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
 
         # Ensure index is string dtype for consistent lookups
         merged_df.index = merged_df.index.astype(str)
+
+        # Restrict to boundary buildings so risk, classification, and output
+        # only cover the requested sub-region.
+        if _boundary_ids is not None:
+            merged_df = merged_df[merged_df.index.isin(_boundary_ids)]
+
         logger.info("merge_results: merging results for %d buildings", len(merged_df))
         risk_df = run_risk_pipeline(merged_df, input.risk_weights)
         logger.debug("merge_results: risk scores computed")
