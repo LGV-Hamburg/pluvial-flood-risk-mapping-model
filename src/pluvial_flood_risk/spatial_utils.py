@@ -234,3 +234,38 @@ def project_crs_to_metric(
     utm = reference.estimate_utm_crs()
     return gdf.to_crs(utm)
 
+
+def filter_features_to_boundary(
+    features: list[dict], boundary: dict
+) -> list[dict]:
+    """Return only features whose geometry intersects *boundary*.
+
+    Parameters
+    ----------
+    features:
+        GeoJSON feature dicts (any geometry type).
+    boundary:
+        A GeoJSON Polygon/MultiPolygon **geometry** dict, or a **Feature** dict
+        wrapping such a geometry.  The coordinates must be in the same CRS as
+        *features* (typically EPSG:4326 for raw GeoJSON inputs).
+
+    Returns
+    -------
+    list[dict]
+        Subset of *features* whose geometries intersect the boundary.
+        Features with null/missing geometries are excluded.
+    """
+    from shapely.geometry import shape
+
+    geom_dict = (
+        boundary["geometry"]
+        if boundary.get("type") == "Feature"
+        else boundary
+    )
+    boundary_geom = shape(geom_dict)
+
+    return [
+        f for f in features
+        if (g := f.get("geometry")) and shape(g).intersects(boundary_geom)
+    ]
+
