@@ -6,6 +6,7 @@ import logging
 
 import geopandas as gpd
 import pandas as pd
+from shapely.geometry import mapping, shape
 
 from .models.field_names import (  # noqa: E402
     BUILDING_FOOTPRINT_AREA_M2,
@@ -299,4 +300,38 @@ def filter_features_to_boundary(
         f for f in features
         if (g := f.get("geometry")) and shape(g).intersects(boundary_geom)
     ]
+
+
+def expand_boundary_by_meters(boundary: dict, meters: float) -> dict:
+    """Return a new GeoJSON geometry dict expanded outward by *meters*.
+
+    Reprojects to an auto-detected metric UTM CRS, applies a Minkowski buffer,
+    then reprojects back to WGS-84 (EPSG:4326).
+
+    Parameters
+    ----------
+    boundary:
+        A GeoJSON Polygon/MultiPolygon **geometry** dict, or a **Feature** dict
+        wrapping such a geometry.  Coordinates must be in WGS-84.
+    meters:
+        Buffer distance in metres.
+
+    Returns
+    -------
+    dict
+        Expanded GeoJSON geometry dict (same type as input, coordinates in WGS-84).
+    """
+
+    geom_dict = (
+        boundary["geometry"]
+        if boundary.get("type") == "Feature"
+        else boundary
+    )
+    geom = shape(geom_dict)
+    gdf = gpd.GeoDataFrame(geometry=[geom], crs="EPSG:4326")
+    gdf_metric = gdf.to_crs(gdf.estimate_utm_crs())
+    gdf_metric = gdf_metric.copy()
+    gdf_metric["geometry"] = gdf_metric.geometry.buffer(meters)
+    expanded = gdf_metric.to_crs("EPSG:4326").geometry.iloc[0]
+    return dict(mapping(expanded))
 
