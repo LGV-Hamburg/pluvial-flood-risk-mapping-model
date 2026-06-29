@@ -34,8 +34,10 @@ generate_payload() {
             },
             outputs: {
                 voronoi_diagram: {
-                    format: "geojson-feature-collection",
-                    transmissionMode: "value"
+                    format: {
+                        type: "application/geo+json",
+                        schema: "https://geojson.org/schema/FeatureCollection.json"
+                    },
                 },
             },
             "response": "document"

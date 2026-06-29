@@ -177,4 +177,5 @@ secrets/*
 scratch/*
 !scratch/arcpy*
 !scratch/*.md
-!scratch/pluvial_flood_risk_test.sh
+!scratch/pfr_example-local-data.sh
+!scratch/pfr_example-remote-data.sh
