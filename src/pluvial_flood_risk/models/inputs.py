@@ -516,6 +516,15 @@ class ProcessInputs(PipelineParams):
     buildings: dict = Field(
         description="GeoJSON FeatureCollection of building footprints."
     )
+    buildings_local: dict | None = Field(
+        default=None,
+        description=(
+            "Optional pre-filtered subset of 'buildings' covering only the "
+            "statistical units intersecting calculation_boundary. Populated by "
+            "resolve_remote_inputs so local steps (exposure, hazard) avoid the "
+            "full-city building set. Global steps use 'buildings'."
+        ),
+    )
     streets: dict = Field(
         description="GeoJSON FeatureCollection of street/road segments."
     )
