@@ -173,32 +173,78 @@ async def _fetch_ogc_features_async(
 ) -> dict:
     """Async implementation of fetch_ogc_features.
 
-    Attempts parallel paging via itemCount from collections endpoint.
-    Falls back to sequential next-link following if unavailable.
+    Paging strategy (in priority order):
+
+    1. ``numberMatched`` from the first page response — reflects the actual
+       item count after applying all active query filters (bbox, CQL, etc.).
+    2. ``itemCount`` from the OGC collections endpoint — fast but filter-
+       unaware (ignores bbox / CQL filters on the items URL).
+    3. Sequential ``links[rel=next]`` following — last resort when neither
+       count source is available.
+
+    For strategies 1 and 2, the first page (offset=0) is fetched eagerly
+    and remaining pages are dispatched in parallel.
     """
     if allowed_origins is not None:
         _assert_allowed(url, allowed_origins)
 
-    item_count = await _get_item_count(url, session, allowed_origins)
+    # Always fetch the first page first so we can read numberMatched.
+    first_page = await _fetch_page_with_offset(
+        url, 0, page_limit, session, allowed_origins, semaphore
+    )
+    features: list[dict] = list(first_page.get("features", []))
 
-    if item_count is not None:
-        n_pages = -(-item_count // page_limit)  # ceiling division
-        logger.info(
-            "Parallel paging: %d features across %d pages (limit=%d)",
-            item_count, n_pages, page_limit,
-        )
-        features = await _fetch_pages_parallel(
-            url, item_count, page_limit, session, allowed_origins, semaphore
-        )
+    # Prefer numberMatched (filter-aware) over collections itemCount.
+    total_count: int | None = first_page.get("numberMatched")
+    count_source = "numberMatched"
+    if total_count is None:
+        total_count = await _get_item_count(url, session, allowed_origins)
+        count_source = "itemCount"
+
+    if total_count is not None:
+        remaining_offsets = list(range(page_limit, total_count, page_limit))
+        if remaining_offsets:
+            logger.info(
+                "Parallel paging: %d features across %d pages "
+                "(limit=%d, source=%s)",
+                total_count, 1 + len(remaining_offsets), page_limit, count_source,
+            )
+            tasks = [
+                _fetch_page_with_offset(
+                    url, offset, page_limit, session, allowed_origins, semaphore
+                )
+                for offset in remaining_offsets
+            ]
+            page_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in page_results:
+                if isinstance(result, BaseException):
+                    raise result
+                features.extend(result.get("features", []))
+        else:
+            logger.info(
+                "%d features fit in one page (limit=%d, source=%s)",
+                total_count, page_limit, count_source,
+            )
     else:
-        logger.info(
-            "itemCount unavailable; falling back to sequential next-link paging"
-        )
-        features = await _fetch_pages_sequential(
-            url, page_limit, session, allowed_origins, semaphore
-        )
+        # No count available — follow next links starting from page 2.
+        next_link = _next_link(first_page)
+        if next_link:
+            logger.info(
+                "No numberMatched or itemCount; "
+                "following next-link from page 2"
+            )
+            extra = await _fetch_pages_sequential(
+                next_link, page_limit, session, allowed_origins, semaphore
+            )
+            features.extend(extra)
+        else:
+            logger.debug(
+                "First page exhausts all results (%d features)", len(features)
+            )
 
-    logger.info("fetch_ogc_features: fetched %d features total from %s", len(features), url)
+    logger.info(
+        "fetch_ogc_features: fetched %d features total from %s", len(features), url
+    )
     return {"type": "FeatureCollection", "features": features}
 
 
@@ -259,37 +305,6 @@ async def _get_item_count(
         logger.debug("Could not fetch itemCount from %s: %s", collections_url, exc)
         return None
 
-
-async def _fetch_pages_parallel(
-    url: str,
-    item_count: int,
-    page_limit: int,
-    session: aiohttp.ClientSession,
-    allowed_origins: list[str] | None = None,
-    semaphore: asyncio.Semaphore | None = None,
-) -> list[dict]:
-    """Fetch all pages in parallel using offset/limit parameters."""
-    offsets = list(range(0, item_count, page_limit))
-
-    tasks = [
-        _fetch_page_with_offset(
-            url, offset, page_limit, session,
-            allowed_origins, semaphore
-        )
-        for offset in offsets
-    ]
-
-    page_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Collect errors and merge features
-    features = []
-    for result in page_results:
-        if isinstance(result, BaseException):
-            raise result
-        
-        features.extend(result.get("features", []))
-
-    return features
 
 
 async def _fetch_page_with_offset(
