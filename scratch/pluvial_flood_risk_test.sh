@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-DATA_DIR="$SCRIPT_DIR/data"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+DATA_DIR="$SCRIPT_DIR/data/example"
 
 API_URL="${API_URL:-http://localhost:8000/processes/pluvial_flood_risk/execution}"
 
@@ -14,10 +14,10 @@ fi
 
 generate_payload() {
     jq -n \
-        --slurpfile buildings "${DATA_DIR}/buildings.geojson" \
-        --slurpfile streets "${DATA_DIR}/strassenflaechen.geojson" \
-        --slurpfile flood_layers "${DATA_DIR}/flood_levels_sri7.geojson" \
-        --slurpfile statistical_units "${DATA_DIR}/statistische-gebiete.geojson" \
+        --slurpfile buildings "${DATA_DIR}/buildings_bbox.geojson" \
+        --slurpfile streets "${DATA_DIR}/strassenflaechen_bbox.geojson" \
+        --slurpfile flood_layers "${DATA_DIR}/flood_levels_sri7_bbox.geojson" \
+        --slurpfile statistical_units "${DATA_DIR}/statistische-gebiete_bbox.geojson" \
         '{
             inputs: {
                 buildings: $buildings[0],
