@@ -28,6 +28,16 @@ class PfrSettings(BaseSettings):
     Set ``PFR_MAX_PARALLEL_REQUESTS=<n>`` to override.
     """
 
+    ogc_page_limit: int = 10_000
+    """Number of features requested per OGC API Features page.
+
+    Larger values reduce the number of parallel page requests and therefore
+    server load and round-trip overhead.  Most OGC API servers cap this at
+    10 000.  Default ``10000``.
+
+    Set ``PFR_OGC_PAGE_LIMIT=<n>`` to override.
+    """
+
     drop_invalid_input_features: bool = False
     """When *True*, features that fail validation (missing required properties
     or missing ``"geometry"`` key) are silently dropped and logged as warnings
