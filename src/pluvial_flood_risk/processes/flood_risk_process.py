@@ -22,6 +22,7 @@ import logging
 import os
 from collections import Counter
 from typing import ClassVar, cast
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import pandas as pd
 from fastprocesses import BaseProcessResult
@@ -260,6 +261,36 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
 
         logger.info("resolve_remote_inputs: downloading remote inputs: %s", references)
         allowed_origins = self._load_allowed_origins()
+
+        # When a calculation_boundary is present, narrow the streets and
+        # flood_layers fetch URLs to boundary + halo so that only the relevant
+        # region is downloaded.  Buildings are left unfiltered — the
+        # vulnerability step needs city-wide TOPSIS statistics.
+        cb = inputs.get("calculation_boundary")
+        if cb is not None:
+            from shapely.geometry import shape as _shape
+            _halo = expand_boundary_by_meters(cb, _HAZARD_BUFFER_HALO_M)
+            _minx, _miny, _maxx, _maxy = _shape(_halo).bounds
+            _bbox = (
+                f"{_minx:.6f},{_miny:.6f},{_maxx:.6f},{_maxy:.6f}"
+            )
+            for key in ("streets", "flood_layers"):
+                if key in references:
+                    ref = dict(inputs[key])
+                    _parsed = urlparse(ref["href"])
+                    _params = parse_qs(_parsed.query, keep_blank_values=True)
+                    _params["bbox"] = [_bbox]
+                    ref["href"] = urlunparse(
+                        _parsed._replace(
+                            query=urlencode(_params, doseq=True)
+                        )
+                    )
+                    inputs[key] = ref
+                    logger.info(
+                        "resolve_remote_inputs: bbox (±%.0fm halo) applied "
+                        "to '%s': %s",
+                        _HAZARD_BUFFER_HALO_M, key, _bbox,
+                    )
 
         ref_map = {key: inputs[key] for key in references}
         resolved = fetch_all_references(

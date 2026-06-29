@@ -517,7 +517,7 @@ def fetch_all_references(
     *,
     allowed_origins: list[str] | None = None,
     timeout: float = 30.0,
-    page_limit: int = 1000,
+    page_limit: int = 10000,
     max_concurrent_requests: int = 10,
 ) -> dict[str, dict]:
     """Fetch all ``{href, type}`` reference objects concurrently.
