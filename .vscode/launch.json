@@ -58,7 +58,7 @@
                 "-Q", "floodrisk",
                 "--loglevel=debug",
                 "--pool", "threads",
-                "--concurrency", "4"
+                "--concurrency", "2"
             ],
             "jinja": true,
             "envFile": "${workspaceFolder}/.env",
