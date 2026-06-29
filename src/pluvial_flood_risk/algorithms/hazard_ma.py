@@ -69,6 +69,7 @@ import time
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import shapely
 from scipy.stats import lognorm
 from shapely.ops import unary_union
 
@@ -141,6 +142,33 @@ def compute_mobility_flood_fractions(
         params = HazardParams()
 
     # ------------------------------------------------------------------
+    # Geometry diagnostics (DEBUG — helps diagnose vertex-complexity issues)
+    # ------------------------------------------------------------------
+    def _geo_diag(gdf: gpd.GeoDataFrame, name: str) -> None:
+        n_coords = int(shapely.get_num_coordinates(gdf.geometry.values).sum())
+        n_invalid = int((~gdf.geometry.is_valid).sum())
+        logger.debug(
+            "MA geometry diagnostic — %s: %d features, %d total coords, "
+            "%d invalid geometries",
+            name, len(gdf), n_coords, n_invalid,
+        )
+
+    _geo_diag(buildings, "buildings")
+    _geo_diag(streets, "streets")
+    _geo_diag(flood, "flood")
+
+    # Per-building vertex count distribution — key indicator of GEOS cost
+    _bld_coords = shapely.get_num_coordinates(buildings.geometry.values)
+    logger.debug(
+        "MA buildings vertex count: min=%d p50=%d p95=%d p99=%d max=%d",
+        int(_bld_coords.min()),
+        int(np.percentile(_bld_coords, 50)),
+        int(np.percentile(_bld_coords, 95)),
+        int(np.percentile(_bld_coords, 99)),
+        int(_bld_coords.max()),
+    )
+
+    # ------------------------------------------------------------------
     # Resolve building id column
     # ------------------------------------------------------------------
     bld = buildings.copy()
@@ -152,8 +180,16 @@ def compute_mobility_flood_fractions(
     # ------------------------------------------------------------------
     # Dissolve flood into a single geometry for fast difference operations
     # ------------------------------------------------------------------
+    _t_fu = time.perf_counter()
+    _flood_union_geom = unary_union(flood.geometry)
+    logger.debug(
+        "MA flood_union: %s, %d coords, built in %.2fs",
+        _flood_union_geom.geom_type,
+        shapely.get_num_coordinates(_flood_union_geom),
+        time.perf_counter() - _t_fu,
+    )
     flood_union: gpd.GeoDataFrame = gpd.GeoDataFrame(
-        geometry=[unary_union(flood.geometry)],
+        geometry=[_flood_union_geom],
         crs=flood.crs,
     )
 
@@ -166,12 +202,78 @@ def compute_mobility_flood_fractions(
         streets_poly["geometry"] = streets_poly.geometry.buffer(0.5)
 
     # ------------------------------------------------------------------
-    # Pre-compute a dissolve-union of all buildings for the Erase step
+    # Normalise building geometry before buffering/erase:
+    #   1. make_valid — fixes self-intersections that explode GEOS diff cost
+    #   2. simplify(0.1 m) — removes sub-decimetre vertices that inflate
+    #      vertex counts without affecting the 5/15/30 m buffer areas
+    # Both are cheap no-ops when geometries are already clean.
     # ------------------------------------------------------------------
-    buildings_union = gpd.GeoDataFrame(
-        geometry=[unary_union(bld.geometry)],
-        crs=bld.crs,
+    _bld_geom_raw = bld.geometry.values
+    _bld_geom_valid = shapely.make_valid(_bld_geom_raw)
+    _bld_arr = shapely.simplify(_bld_geom_valid, tolerance=0.1, preserve_topology=True)
+    bld = bld.set_geometry(
+        gpd.array.GeometryArray(_bld_arr), crs=bld.crs  # type: ignore[arg-type]
     )
+    logger.debug(
+        "MA buildings after make_valid+simplify: "
+        "coords before=%d, after=%d",
+        int(shapely.get_num_coordinates(_bld_geom_raw).sum()),
+        int(shapely.get_num_coordinates(_bld_arr).sum()),
+    )
+
+    # ------------------------------------------------------------------
+    # STRtree for building footprint erase (replaces city-wide unary_union
+    # which is slow when buildings overlap — subtract only nearby footprints
+    # from each zone buffer instead of the full-city geometry).
+    # ------------------------------------------------------------------
+    _bld_arr = bld.geometry.values
+    _bld_ids = bld[building_id_col].values
+    _bld_strtree = shapely.STRtree(_bld_arr)
+
+    _left, _right = _bld_strtree.query(_bld_arr, predicate="overlaps")
+    _n_overlapping_pairs = int((_left < _right).sum())
+    if _n_overlapping_pairs > 0:
+        logger.warning(
+            "MA buildings: %d overlapping building pairs detected — "
+            "using STRtree-local erase to avoid GEOS complexity.",
+            _n_overlapping_pairs,
+        )
+    else:
+        logger.debug("MA buildings: 0 overlapping pairs")
+
+    def _erase_bld(buffers_arr: np.ndarray, zone_label: str = "") -> gpd.GeoDataFrame:
+        """Subtract locally-intersecting building footprints from each buffer.
+
+        Uses the pre-built STRtree so only nearby buildings are erased from
+        each zone, avoiding a city-wide unary_union.
+        """
+        zone_idx, hit_idx = _bld_strtree.query(
+            buffers_arr, predicate="intersects"
+        )
+        unique_zones = np.unique(zone_idx)
+        hits_per_zone = np.bincount(zone_idx, minlength=len(buffers_arr))
+        logger.debug(
+            "MA _erase_bld %s: %d zones with hits, "
+            "neighbors/building: min=%d p50=%d p95=%d max=%d",
+            zone_label,
+            len(unique_zones),
+            int(hits_per_zone[hits_per_zone > 0].min()),
+            int(np.median(hits_per_zone[hits_per_zone > 0])),
+            int(np.percentile(hits_per_zone[hits_per_zone > 0], 95)),
+            int(hits_per_zone.max()),
+        )
+        result = buffers_arr.copy()
+        for zi in unique_zones:
+            mask = zone_idx == zi
+            result[zi] = shapely.difference(
+                buffers_arr[zi],
+                shapely.unary_union(_bld_arr[hit_idx[mask]]),
+            )
+        valid = ~shapely.is_empty(result)
+        return gpd.GeoDataFrame(
+            {building_id_col: _bld_ids[valid], "geometry": result[valid]},
+            crs=bld.crs,
+        )
 
     # ------------------------------------------------------------------
     # helper: tabulate flooded fraction for each building in a zone GDF
@@ -231,10 +333,8 @@ def compute_mobility_flood_fractions(
         len(bld),
     )
     _t_z1 = time.perf_counter()
-    b5 = bld[[building_id_col, "geometry"]].copy()
-    b5["geometry"] = b5.geometry.buffer(params.buffer_zone1_m)
-    # Erase building footprint from buffer
-    bu5 = gpd.overlay(b5, buildings_union, how="difference", keep_geom_type=False)
+    _b5_arr = shapely.buffer(_bld_arr, params.buffer_zone1_m)
+    bu5 = _erase_bld(_b5_arr, "zone1")
     tab5 = _tabulate(bu5)
     logger.info("MA step 3.1 zone1: done in %.2fs", time.perf_counter() - _t_z1)
 
@@ -247,10 +347,8 @@ def compute_mobility_flood_fractions(
         len(streets_poly),
     )
     _t_z2 = time.perf_counter()
-    b15 = bld[[building_id_col, "geometry"]].copy()
-    b15["geometry"] = b15.geometry.buffer(params.buffer_zone2_m)
-    # Erase buildings from buffer ring
-    bu15 = gpd.overlay(b15, buildings_union, how="difference", keep_geom_type=False)
+    _b15_arr = shapely.buffer(_bld_arr, params.buffer_zone2_m)
+    bu15 = _erase_bld(_b15_arr, "zone2")
     # Clip to street polygons
     bus15 = gpd.overlay(streets_poly, bu15, how="intersection", keep_geom_type=False)
     tab15 = _tabulate(bus15)
@@ -272,10 +370,14 @@ def compute_mobility_flood_fractions(
         len(streets_poly),
     )
     _t_z3 = time.perf_counter()
-    b1530 = b15.copy()
-    b1530["geometry"] = b15.geometry.buffer(ring_width)
-    # Ring = B1530 \ B15
-    b1530 = gpd.overlay(b1530, b15, how="difference", keep_geom_type=False)
+    # Ring = Buffer(_b15_arr, ring_width) \ _b15_arr — vectorized 1-to-1
+    _b1530_arr = shapely.buffer(_b15_arr, ring_width)
+    _ring_arr = shapely.difference(_b1530_arr, _b15_arr)
+    _valid_ring = ~shapely.is_empty(_ring_arr)
+    b1530 = gpd.GeoDataFrame(
+        {building_id_col: _bld_ids[_valid_ring], "geometry": _ring_arr[_valid_ring]},
+        crs=bld.crs,
+    )
     # Clip to streets
     bus30 = gpd.overlay(streets_poly, b1530, how="intersection", keep_geom_type=False)
     tab30 = _tabulate(bus30)

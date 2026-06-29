@@ -7,6 +7,7 @@ import logging
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import mapping, shape
+from shapely.ops import unary_union
 
 from .models.field_names import (  # noqa: E402
     BUILDING_FOOTPRINT_AREA_M2,
@@ -190,7 +191,37 @@ def convert_geojson_to_gdf(
         ]
     gdf = gpd.GeoDataFrame.from_features(features)
     if gdf.crs is None:
-        gdf = gdf.set_crs(source_crs or "EPSG:4326")
+        _effective_crs = source_crs or "EPSG:4326"
+        # Guard: if the caller declared a projected CRS but the actual
+        # coordinates look geographic (|x| ≤ 180, |y| ≤ 90), the data is
+        # WGS84 GeoJSON and the projected label is wrong.  This happens when
+        # target_crs is passed as source_crs for remotely-fetched data that
+        # the OGC API returned in EPSG:4326.  Fall back to EPSG:4326 so that
+        # project_crs_to_metric can reproject correctly.
+        if source_crs and not gdf.empty:
+            try:
+                from pyproj import CRS as _ProjCRS
+                if _ProjCRS.from_user_input(source_crs).is_projected:
+                    _bounds = gdf.geometry.dropna().total_bounds
+                    if (
+                        _bounds.size == 4
+                        and abs(_bounds[0]) <= 181
+                        and abs(_bounds[2]) <= 181
+                        and abs(_bounds[1]) <= 91
+                        and abs(_bounds[3]) <= 91
+                    ):
+                        logger.warning(
+                            "convert_geojson_to_gdf: declared CRS %r is "
+                            "projected but coordinates look geographic "
+                            "(bounds %s) — assuming EPSG:4326; data will be "
+                            "reprojected to target CRS by project_crs_to_metric",
+                            source_crs,
+                            tuple(round(float(v), 4) for v in _bounds),
+                        )
+                        _effective_crs = "EPSG:4326"
+            except Exception:
+                pass
+        gdf = gdf.set_crs(_effective_crs)
     invalid_mask = gdf.geometry.notna() & ~gdf.geometry.is_valid
     if invalid_mask.any():
         logger.warning(
@@ -334,4 +365,48 @@ def expand_boundary_by_meters(boundary: dict, meters: float) -> dict:
     gdf_metric["geometry"] = gdf_metric.geometry.buffer(meters)
     expanded = gdf_metric.to_crs("EPSG:4326").geometry.iloc[0]
     return dict(mapping(expanded))
+
+
+def filter_features_to_intersecting_units(
+    features: list[dict], units: list[dict], boundary: dict, halo: dict
+) -> list[dict]:
+    """Return features intersecting the union of *units* that intersect *boundary*.
+
+    Used to pre-shrink the building set passed to local pipeline branches:
+    keep every building within any statistical unit that the calculation
+    boundary touches, so unit-level aggregations (e.g. living-area sums) stay
+    correct, while dropping the rest of the city.  Falls back to the halo
+    region when no usable unit geometries are available.
+
+    Parameters
+    ----------
+    features:
+        Building feature dicts (WGS-84).
+    units:
+        Statistical unit feature dicts (WGS-84); may be empty.
+    boundary:
+        Calculation boundary geometry/Feature dict.
+    halo:
+        Boundary already expanded by the hazard halo; used as fallback region
+        when no statistical units are supplied.
+
+    Returns
+    -------
+    list[dict]
+        Buildings intersecting the intersecting-units union (or the halo).
+    """
+    def _geom(b: dict):
+        return shape(b["geometry"] if b.get("type") == "Feature" else b)
+
+    boundary_geom = _geom(boundary)
+    unit_geoms = [
+        shape(g)
+        for u in units
+        if (g := u.get("geometry")) and shape(g).intersects(boundary_geom)
+    ]
+    region = unary_union(unit_geoms) if unit_geoms else _geom(halo)
+    return [
+        f for f in features
+        if (g := f.get("geometry")) and shape(g).intersects(region)
+    ]
 

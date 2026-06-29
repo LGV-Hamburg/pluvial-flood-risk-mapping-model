@@ -64,6 +64,7 @@ import time
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import shapely
 from scipy.stats import lognorm
 from shapely.ops import unary_union
 
@@ -147,6 +148,21 @@ def compute_wb_flood_fractions(
         )
 
     # ------------------------------------------------------------------
+    # Geometry diagnostics (DEBUG — helps diagnose vertex-complexity issues)
+    # ------------------------------------------------------------------
+    def _geo_diag(gdf: gpd.GeoDataFrame, name: str) -> None:
+        n_coords = int(shapely.get_num_coordinates(gdf.geometry.values).sum())
+        n_invalid = int((~gdf.geometry.is_valid).sum())
+        logger.debug(
+            "WB geometry diagnostic — %s: %d features, %d total coords, "
+            "%d invalid geometries",
+            name, len(gdf), n_coords, n_invalid,
+        )
+
+    _geo_diag(buildings, "buildings")
+    _geo_diag(flood_layers, "flood_layers")
+
+    # ------------------------------------------------------------------
     # Resolve building id
     # ------------------------------------------------------------------
     bld = buildings.copy()
@@ -164,12 +180,35 @@ def compute_wb_flood_fractions(
     bu2 = bld[[building_id_col, "geometry"]].copy()
     bu2["geometry"] = bu2.geometry.buffer(params.buffer_building_m)
 
-    # Erase building footprints (OUTSIDE_ONLY equivalent)
-    buildings_union = gpd.GeoDataFrame(
-        geometry=[unary_union(bld.geometry)],
+    # Erase building footprints using STRtree-local erase (avoids city-wide
+    # unary_union which is slow when buildings overlap).
+    _bld_arr = bld.geometry.values
+    _bld_ids = bld[building_id_col].values
+    _bld_strtree = shapely.STRtree(_bld_arr)
+    _left, _right = _bld_strtree.query(_bld_arr, predicate="overlaps")
+    _n_overlap_pairs = int((_left < _right).sum())
+    if _n_overlap_pairs > 0:
+        logger.warning(
+            "WB buildings: %d overlapping building pairs — "
+            "using STRtree-local erase.",
+            _n_overlap_pairs,
+        )
+    else:
+        logger.debug("WB buildings: 0 overlapping pairs")
+    _b2_arr = shapely.buffer(_bld_arr, params.buffer_building_m)
+    _zone_idx, _hit_idx = _bld_strtree.query(_b2_arr, predicate="intersects")
+    _bu2_arr = _b2_arr.copy()
+    for _zi in np.unique(_zone_idx):
+        _mask = _zone_idx == _zi
+        _bu2_arr[_zi] = shapely.difference(
+            _b2_arr[_zi],
+            shapely.unary_union(_bld_arr[_hit_idx[_mask]]),
+        )
+    _valid = ~shapely.is_empty(_bu2_arr)
+    bu2 = gpd.GeoDataFrame(
+        {building_id_col: _bld_ids[_valid], "geometry": _bu2_arr[_valid]},
         crs=bld.crs,
     )
-    bu2 = gpd.overlay(bu2, buildings_union, how="difference", keep_geom_type=False)
 
     # Pre-compute zone area per building (same for all depth classes)
     bu2["zone_area_m2"] = bu2.geometry.area
@@ -193,8 +232,16 @@ def compute_wb_flood_fractions(
         logger.debug("WB step 4.1 depth=%dcm: start overlay", depth_cm)
         flood_at_depth = flood_layers[flood_layers["level_cm"] == depth_cm].copy()
 
+        _flood_union_geom = unary_union(flood_at_depth.geometry)
+        logger.debug(
+            "WB depth=%dcm flood_union: %s, %d coords (from %d features)",
+            depth_cm,
+            _flood_union_geom.geom_type,
+            shapely.get_num_coordinates(_flood_union_geom),
+            len(flood_at_depth),
+        )
         flood_union = gpd.GeoDataFrame(
-            geometry=[unary_union(flood_at_depth.geometry)],
+            geometry=[_flood_union_geom],
             crs=flood_layers.crs,
         )
 

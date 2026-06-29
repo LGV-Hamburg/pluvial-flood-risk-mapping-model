@@ -20,6 +20,7 @@ Each branch receives the full exec_body and runs on its own Celery worker.
 import json
 import logging
 import os
+import time
 from collections import Counter
 from typing import ClassVar, cast
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -87,6 +88,7 @@ from ..spatial_utils import (
     convert_geojson_to_gdf,
     expand_boundary_by_meters,
     filter_features_to_boundary,
+    filter_features_to_intersecting_units,
     filter_gdf_to_boundary,
     join_statistical_unit_attributes,
     project_crs_to_metric,
@@ -94,6 +96,49 @@ from ..spatial_utils import (
 from ..validation import drop_invalid_features, load_schema_file
 
 logger = logging.getLogger(__name__)
+
+
+def _do_fetch_all_references(
+    ref_map: dict,
+    allowed_origins: list[str] | None,
+    page_limit: int,
+    max_concurrent_requests: int,
+) -> "dict[str, dict]":
+    """Typed shim around fetch_all_references for joblib caching."""
+    return fetch_all_references(
+        ref_map,
+        allowed_origins=allowed_origins,
+        page_limit=page_limit,
+        max_concurrent_requests=max_concurrent_requests,
+    )
+
+
+def _fetch_references_cached(
+    ref_map: dict,
+    *,
+    allowed_origins: list[str],
+    page_limit: int,
+    max_concurrent_requests: int,
+) -> "dict[str, dict]":
+    """Fetch remote references, optionally caching to disk via joblib.
+
+    Set ``PFR_DEV_CACHE_DIR`` in your ``.env`` to a writable directory
+    (e.g. ``data/intermediate``) to enable.  The cache is keyed by the
+    function arguments, so changing any URL busts it automatically.
+    Never set this variable in production — it bypasses live data.
+    """
+    import joblib
+
+    cache_dir = os.environ.get("PFR_DEV_CACHE_DIR", "").strip() or None
+    if cache_dir:
+        logger.warning("DEV CACHE active — PFR_DEV_CACHE_DIR=%s", cache_dir)
+    mem = joblib.Memory(cache_dir, verbose=0)
+    # joblib's MemorizedFunc stubs don't forward the wrapped function's
+    # signature — ignore the spurious arg-type error on the call below.
+    _cached = mem.cache(_do_fetch_all_references)
+    _result = _cached(ref_map, allowed_origins, page_limit, max_concurrent_requests)  # type: ignore[arg-type]
+    return cast("dict[str, dict]", _result)
+
 
 # Halo added to calculation_boundary when pre-filtering streets and flood
 # layers.  Must cover the outer buffer ring of the most distant hazard step
@@ -184,6 +229,15 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
 
     hazard_ma_pipeline      — Steps 3.1-3.2
         Concentric street buffers (5 / 15 / 30 m) x flood layer → log-normal CDF → HMA
+
+    Scope rules when ``calculation_boundary`` is set:
+        - vulnerability is GLOBAL — TOPSIS normalises against the full city
+          population, so per-building V is unaffected by the boundary.
+        - exposure / hazard are LOCAL — computed only for boundary buildings
+          (exposure keeps the full statistical-unit population for the
+          living-area sum, then filters). Per-building results are exact.
+        - merge risk is exact; classification breaks are REGIONAL (quantiles
+          over the boundary subset), not city-wide.
     """
     schema_registry = Registry().with_resources([
         (
@@ -292,8 +346,49 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                         _HAZARD_BUFFER_HALO_M, key, _bbox,
                     )
 
+        # When target_crs is set, request streets and flood_layers in the
+        # projected CRS so they arrive in metric coordinates.  Buildings are
+        # intentionally excluded: they must remain in WGS-84 for the
+        # boundary-based buildings_local pre-filter below.
+        # (flatgeobuf references are skipped — CRS is embedded in the file.)
+        _crs_uri: str | None = None
+        _target_crs_str: str | None = (
+            inputs["target_crs"]
+            if isinstance(inputs.get("target_crs"), str) and inputs["target_crs"]
+            else None
+        )
+        if _target_crs_str:
+            from pyproj import CRS as _ProjCRS
+            try:
+                _auth, _code = _ProjCRS.from_user_input(_target_crs_str).to_authority()
+                _crs_uri = f"http://www.opengis.net/def/crs/{_auth}/0/{_code}"
+            except Exception:
+                logger.warning(
+                    "resolve_remote_inputs: could not derive OGC URI for "
+                    "target_crs=%r — crs parameter injection skipped",
+                    _target_crs_str,
+                )
+        if _crs_uri:
+            for key in ("streets", "flood_layers"):
+                if key in references:
+                    ref = dict(inputs[key])
+                    if ref.get("type") == "application/geo+json":
+                        _parsed = urlparse(ref["href"])
+                        _params = parse_qs(_parsed.query, keep_blank_values=True)
+                        _params["crs"] = [_crs_uri]
+                        ref["href"] = urlunparse(
+                            _parsed._replace(
+                                query=urlencode(_params, doseq=True)
+                            )
+                        )
+                        inputs[key] = ref
+                        logger.debug(
+                            "resolve_remote_inputs: crs=%r injected into '%s'",
+                            _crs_uri, key,
+                        )
+
         ref_map = {key: inputs[key] for key in references}
-        resolved = fetch_all_references(
+        resolved = _fetch_references_cached(
             ref_map,
             allowed_origins=allowed_origins,
             page_limit=settings.ogc_page_limit,
@@ -305,6 +400,38 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                 key, len(data.get("features", [])),
             )
             inputs[key] = data
+        if cb is not None:
+            units = inputs.get("statistical_units")
+            buildings = inputs.get("buildings")
+            if (
+                isinstance(buildings, dict)
+                and buildings.get("features")
+                and isinstance(units, dict)
+                and units.get("features")
+            ):
+                local_features = filter_features_to_intersecting_units(
+                    buildings["features"],
+                    units["features"],
+                    cb,
+                    expand_boundary_by_meters(cb, _HAZARD_BUFFER_HALO_M),
+                )
+                inputs["buildings_local"] = {
+                    "type": "FeatureCollection",
+                    "features": local_features,
+                }
+                logger.info(
+                    "resolve_remote_inputs: buildings_local = %d / %d features",
+                    len(local_features),
+                    len(buildings.get("features", [])),
+                )
+        # Statistical units diagnostic
+        _stat = inputs.get("statistical_units")
+        if isinstance(_stat, dict):
+            _stat_feats = _stat.get("features") or []
+            logger.debug(
+                "resolve_remote_inputs: statistical_units = %d features",
+                len(_stat_feats),
+            )
         if job_progress_callback:
             job_progress_callback(
                 0, "Downloaded remote inputs: %s" % ", ".join(references)
@@ -454,8 +581,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             df = pd.DataFrame(rows).set_index("_id")
 
         logger.info("vulnerability_pipeline: %d buildings", len(df))
+        _t_vuln = time.perf_counter()
         result_df = run_vulnerability_pipeline(df, input.vulnerability_parameters)
-        logger.debug("vulnerability_pipeline: done")
+        logger.info(
+            "vulnerability_pipeline: done in %.2fs",
+            time.perf_counter() - _t_vuln,
+        )
 
         output_columns = [
             SENSITIVITY_INDEX,
@@ -482,8 +613,11 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         # Build the GDF from ALL buildings first — unit-level aggregations
         # (living_area_m2_statistical_unit groupby) must span the full unit
         # population.  The boundary filter is applied after those aggregations.
+        # buildings_local already covers whole units intersecting the boundary,
+        # so unit-level sums remain correct while avoiding the full city set.
         gdf = convert_geojson_to_gdf(
-            input.buildings["features"], input.target_crs
+            (input.buildings_local or input.buildings)["features"],
+            input.target_crs,
         )
         gdf_metric = project_crs_to_metric(gdf, input.target_crs)
         gdf_metric[BUILDING_FOOTPRINT_AREA_M2] = gdf_metric.geometry.area
@@ -574,15 +708,16 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             else None
         )
 
-        buildings_features = inp.buildings["features"]
+        buildings_features = (inp.buildings_local or inp.buildings)["features"]
         if inp.calculation_boundary is not None:
+            _total = len(buildings_features)
             buildings_features = filter_features_to_boundary(
                 buildings_features, inp.calculation_boundary
             )
             logger.info(
                 "hazard_wb_pipeline: calculation_boundary applied "
                 "— %d/%d buildings in boundary",
-                len(buildings_features), len(inp.buildings["features"]),
+                len(buildings_features), _total,
             )
 
         buildings_gdf = convert_geojson_to_gdf(
@@ -646,15 +781,16 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             else None
         )
 
-        buildings_features = input.buildings["features"]
+        buildings_features = (input.buildings_local or input.buildings)["features"]
         if input.calculation_boundary is not None:
+            _total = len(buildings_features)
             buildings_features = filter_features_to_boundary(
                 buildings_features, input.calculation_boundary
             )
             logger.info(
                 "hazard_ma_pipeline: calculation_boundary applied "
                 "— %d/%d buildings in boundary",
-                len(buildings_features), len(input.buildings["features"]),
+                len(buildings_features), _total,
             )
 
         buildings_gdf = convert_geojson_to_gdf(
@@ -768,7 +904,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         # None means "outputs" was absent → produce all outputs (OGC req. 27)
         requested = exec_body.get("outputs")
 
-        buildings_features = input.buildings["features"]
+        buildings_features = (input.buildings_local or input.buildings)["features"]
         _boundary_ids: set[str] | None = None
         if input.calculation_boundary is not None:
             original_count = len(buildings_features)
@@ -803,7 +939,10 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         merged_df.index = merged_df.index.astype(str)
 
         # Restrict to boundary buildings so risk, classification, and output
-        # only cover the requested sub-region.
+        # only cover the requested sub-region.  Per-building risk is exact
+        # (Risk = H^a x E^b x V^c has no cross-building term, and V is global),
+        # but the head/tail classification breaks are quantiles over this
+        # subset — i.e. REGIONAL, not city-wide, when calculation_boundary is set.
         if _boundary_ids is not None:
             merged_df = merged_df[merged_df.index.isin(_boundary_ids)]
 
