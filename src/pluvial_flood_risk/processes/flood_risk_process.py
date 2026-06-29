@@ -84,6 +84,7 @@ from ..serialization import build_enriched_features, serialize_output_value
 from ..settings import settings
 from ..spatial_utils import (
     convert_geojson_to_gdf,
+    expand_boundary_by_meters,
     filter_features_to_boundary,
     filter_gdf_to_boundary,
     join_statistical_unit_attributes,
@@ -92,6 +93,11 @@ from ..spatial_utils import (
 from ..validation import drop_invalid_features, load_schema_file
 
 logger = logging.getLogger(__name__)
+
+# Halo added to calculation_boundary when pre-filtering streets and flood
+# layers.  Must cover the outer buffer ring of the most distant hazard step
+# (hazard_MA zone 3 = 30 m).
+_HAZARD_BUFFER_HALO_M = 30.0
 
 _INPUT_BUILDING_OUTPUT_COLUMNS = [
     FLOORS_ABOVE_GROUND,
@@ -259,6 +265,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         resolved = fetch_all_references(
             ref_map,
             allowed_origins=allowed_origins,
+            page_limit=settings.ogc_page_limit,
             max_concurrent_requests=settings.max_parallel_requests,
         )
         for key, data in resolved.items():
@@ -530,6 +537,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         inp = ProcessInputs.from_exec_body(exec_body)
         params = inp
 
+        _halo_boundary: dict | None = (
+            expand_boundary_by_meters(inp.calculation_boundary, _HAZARD_BUFFER_HALO_M)
+            if inp.calculation_boundary is not None
+            else None
+        )
+
         buildings_features = inp.buildings["features"]
         if inp.calculation_boundary is not None:
             buildings_features = filter_features_to_boundary(
@@ -548,9 +561,19 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
-        flood_gdf = convert_geojson_to_gdf(
-            inp.flood_layers["features"], params.target_crs
-        )
+        flood_features = inp.flood_layers["features"]
+        if _halo_boundary is not None:
+            _original = len(flood_features)
+            flood_features = filter_features_to_boundary(
+                flood_features, _halo_boundary
+            )
+            logger.info(
+                "hazard_wb_pipeline: boundary +%.0fm halo applied to flood_layers "
+                "— %d/%d features in region",
+                _HAZARD_BUFFER_HALO_M, len(flood_features), _original,
+            )
+
+        flood_gdf = convert_geojson_to_gdf(flood_features, params.target_crs)
         flood_metric = project_crs_to_metric(
             flood_gdf, params.target_crs, buildings_gdf
         )
@@ -584,6 +607,14 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         """
         input = ProcessInputs.from_exec_body(exec_body)
 
+        _halo_boundary: dict | None = (
+            expand_boundary_by_meters(
+                input.calculation_boundary, _HAZARD_BUFFER_HALO_M
+            )
+            if input.calculation_boundary is not None
+            else None
+        )
+
         buildings_features = input.buildings["features"]
         if input.calculation_boundary is not None:
             buildings_features = filter_features_to_boundary(
@@ -602,9 +633,19 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         if "id" in buildings_metric.columns:
             buildings_metric = buildings_metric.set_index("id")
 
-        streets_gdf = convert_geojson_to_gdf(
-            input.streets["features"], input.target_crs
-        )
+        streets_features = input.streets["features"]
+        if _halo_boundary is not None:
+            _original = len(streets_features)
+            streets_features = filter_features_to_boundary(
+                streets_features, _halo_boundary
+            )
+            logger.info(
+                "hazard_ma_pipeline: boundary +%.0fm halo applied to streets "
+                "— %d/%d features in region",
+                _HAZARD_BUFFER_HALO_M, len(streets_features), _original,
+            )
+
+        streets_gdf = convert_geojson_to_gdf(streets_features, input.target_crs)
         streets_metric = project_crs_to_metric(
             streets_gdf, input.target_crs, buildings_gdf
         )
@@ -616,6 +657,14 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             for f in input.flood_layers["features"]
             if f.get("properties", {}).get("level_cm") == ma_level
         ]
+        if _halo_boundary is not None:
+            _original = len(ma_features)
+            ma_features = filter_features_to_boundary(ma_features, _halo_boundary)
+            logger.info(
+                "hazard_ma_pipeline: boundary +%.0fm halo applied to flood_layers "
+                "— %d/%d features in region (level_cm=%d)",
+                _HAZARD_BUFFER_HALO_M, len(ma_features), _original, ma_level,
+            )
         logger.debug(
             "hazard_ma_pipeline: filtering flood_layers to level_cm=%d", ma_level
         )
