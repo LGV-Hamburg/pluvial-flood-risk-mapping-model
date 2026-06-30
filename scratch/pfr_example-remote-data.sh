@@ -70,6 +70,12 @@ generate_payload() {
                     },
                     transmissionMode: "value"
                 },
+                classification_breaks_wb: {
+                    transmissionMode: "value"
+                },
+                classification_breaks_ma: {
+                    transmissionMode: "value"
+                },
             },
             "response": "document"
         }'
