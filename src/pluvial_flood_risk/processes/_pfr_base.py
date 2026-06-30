@@ -13,13 +13,40 @@ import json
 import logging
 import os
 from collections import Counter
+from typing import ClassVar
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+from fastprocesses import BaseProcessResult
 from pyproj import CRS as ProjCRS
 from referencing import Registry
 from shapely.geometry import shape as shapely_shape
 
 from ..io import fetch_references_cached
+from ..models.field_names import (
+    BUILDING_LIVING_AREA_M2,
+    BUILDING_TYPE,
+    CHILDREN_UNDER_10,
+    COPING_CAPACITY_INDEX,
+    ELDERLY_SINGLES_OVER_65,
+    EXPOSURE_MOBILITY_ACCESSIBILITY,
+    FLOORS_ABOVE_GROUND,
+    HAZARD_MOBILITY_ACCESSIBILITY,
+    HAZARD_WELL_BEING,
+    LIVING_AREA_M2_STATISTICAL_UNIT,
+    NO_HIGHSCHOOL_DIPLOMA,
+    PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
+    PLUVIAL_FLOOD_RISK_WELL_BEING,
+    RESIDENTS_GROUND_FLOOR,
+    RESIDENTS_IN_STATISTICAL_UNIT,
+    RESIDENTS_PER_BUILDING,
+    RISK_CLASS_MOBILITY_ACCESSIBILITY,
+    RISK_CLASS_WELL_BEING,
+    SENSITIVITY_INDEX,
+    SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
+    SOCIAL_VULNERABILITY_INDEX,
+    SOCIAL_WELFARE_RECIPIENTS,
+    STATISTICAL_UNIT_ID,
+)
 from ..models.inputs import (
     BuildingProperties,
     BuildingsFeatureCollection,
@@ -320,3 +347,94 @@ class BasePfRProcess:
                 )
         logger.info("late_validate: all inputs valid")
         return True
+
+
+# ---------------------------------------------------------------------------
+# Shared output constants
+# ---------------------------------------------------------------------------
+
+_INPUT_BUILDING_OUTPUT_COLUMNS: list[str] = [
+    FLOORS_ABOVE_GROUND,
+    BUILDING_TYPE,
+    CHILDREN_UNDER_10,
+    ELDERLY_SINGLES_OVER_65,
+    SOCIAL_WELFARE_RECIPIENTS,
+    NO_HIGHSCHOOL_DIPLOMA,
+    STATISTICAL_UNIT_ID,
+    RESIDENTS_IN_STATISTICAL_UNIT,
+    LIVING_AREA_M2_STATISTICAL_UNIT,
+]
+
+# All computed output columns produced by the full pipeline.
+# Matches the enriched-feature properties written by both process variants.
+_OUTPUT_COLUMNS: list[str] = [
+    SENSITIVITY_INDEX,
+    COPING_CAPACITY_INDEX,
+    SOCIAL_VULNERABILITY_INDEX,
+    SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
+    BUILDING_LIVING_AREA_M2,
+    RESIDENTS_PER_BUILDING,
+    RESIDENTS_GROUND_FLOOR,
+    EXPOSURE_MOBILITY_ACCESSIBILITY,
+    HAZARD_WELL_BEING,
+    HAZARD_MOBILITY_ACCESSIBILITY,
+    PLUVIAL_FLOOD_RISK_WELL_BEING,
+    PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
+    RISK_CLASS_WELL_BEING,
+    RISK_CLASS_MOBILITY_ACCESSIBILITY,
+]
+
+
+# ---------------------------------------------------------------------------
+# Shared output model
+# ---------------------------------------------------------------------------
+
+
+class PfRiskResult(BaseProcessResult):
+    """Combined output of the pluvial flood risk pipeline.
+
+    Fields mirror the process outputs declared in the process description YAML.
+    Shared by both :class:`PluvialFloodRiskProcess` (scatter-gather) and
+    :class:`PluvialFloodRiskCitywide` (data fan-out).
+    """
+
+    output_serializers: ClassVar = {
+        "risk_buildings": {
+            "application/geo+json": "risk_buildings_to_json",
+        },
+        "voronoi_diagram": {
+            "application/geo+json": "voronoi_diagram_to_json",
+        },
+        "classification_breaks_wb": {
+            "application/json": "classification_breaks_wb_to_json",
+        },
+        "classification_breaks_ma": {
+            "application/json": "classification_breaks_ma_to_json",
+        },
+    }
+
+    def risk_buildings_to_json(self) -> bytes:
+        result = self.model_dump(mode="json", include={"risk_buildings"})["risk_buildings"]
+        return json.dumps(result).encode()
+
+    def voronoi_diagram_to_json(self) -> bytes:
+        result = self.model_dump(mode="json", include={"voronoi_diagram"})["voronoi_diagram"]
+        return json.dumps(result).encode()
+
+    def classification_breaks_wb_to_json(self) -> bytes:
+        result = self.model_dump(
+            mode="json", include={"classification_breaks_wb"}
+        )["classification_breaks_wb"]
+        return json.dumps(result).encode()
+
+    def classification_breaks_ma_to_json(self) -> bytes:
+        result = self.model_dump(
+            mode="json", include={"classification_breaks_ma"}
+        )["classification_breaks_ma"]
+        return json.dumps(result).encode()
+
+    risk_buildings: dict | None = None
+    voronoi_diagram: dict | None = None
+    classification_breaks_wb: list[float] | None = None
+    classification_breaks_ma: list[float] | None = None
+    validation_report: dict | None = None

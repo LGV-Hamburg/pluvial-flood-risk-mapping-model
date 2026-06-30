@@ -20,10 +20,9 @@ Each branch receives the full exec_body and runs on its own Celery worker.
 import json
 import logging
 import time
-from typing import ClassVar, cast
+from typing import cast
 
 import pandas as pd
-from fastprocesses import BaseProcessResult
 from fastprocesses.core.base_process import BaseScatterProcess, parallel_step
 from fastprocesses.core.models import ProcessDescription
 from fastprocesses.core.types import JobProgressCallback
@@ -77,15 +76,16 @@ from ..spatial_utils import (
     project_crs_to_metric,
 )
 from ..validation import load_schema_file
-from ._pfr_base import _HAZARD_BUFFER_HALO_M, BasePfRProcess
+from ._pfr_base import (
+    _HAZARD_BUFFER_HALO_M,
+    _INPUT_BUILDING_OUTPUT_COLUMNS,
+    _OUTPUT_COLUMNS,
+    BasePfRProcess,
+    PfRiskResult,
+)
 
 logger = logging.getLogger(__name__)
 
-
-# Halo added to calculation_boundary when pre-filtering streets and flood
-# layers.  Must cover the outer buffer ring of the most distant hazard step
-# (hazard_MA zone 3 = 30 m).
-_HAZARD_BUFFER_HALO_M = 30.0
 
 def _get_boundary_buildings(
     input: "ProcessInputs",
@@ -109,84 +109,9 @@ def _get_boundary_buildings(
     return features
 
 
-_INPUT_BUILDING_OUTPUT_COLUMNS = [
-    FLOORS_ABOVE_GROUND,
-    BUILDING_TYPE,
-    CHILDREN_UNDER_10,
-    ELDERLY_SINGLES_OVER_65,
-    SOCIAL_WELFARE_RECIPIENTS,
-    NO_HIGHSCHOOL_DIPLOMA,
-    STATISTICAL_UNIT_ID,
-    RESIDENTS_IN_STATISTICAL_UNIT,
-    LIVING_AREA_M2_STATISTICAL_UNIT,
-]
-
 # ---------------------------------------------------------------------------
-# Output model
-# ---------------------------------------------------------------------------
-
-
-class PfRiskResult(BaseProcessResult):
-    """Combined output of the pluvial flood risk pipeline.
-
-    Fields mirror the process outputs declared in ``process_description.outputs``.
-    """
-
-    output_serializers: ClassVar = {
-            "risk_buildings": {
-                "application/geo+json": "risk_buildings_to_json",
-            },
-            "voronoi_diagram": {
-                "application/geo+json": "voronoi_diagram_to_json",
-            },
-            "classification_breaks_wb": {
-                "application/json": "classification_breaks_wb_to_json"
-            },
-            "classification_breaks_ma": {
-                "application/json": "classification_breaks_ma_to_json"
-            }
-        }
-
-    def risk_buildings_to_json(self) -> bytes:
-        result=self.model_dump(
-            mode="json", include={"risk_buildings"}
-        )["risk_buildings"]
-        return json.dumps(result).encode()
-    
-    def voronoi_diagram_to_json(self) -> bytes:
-        result=self.model_dump(
-            mode="json", include={"voronoi_diagram"}
-        )["voronoi_diagram"]
-        return json.dumps(result).encode()
-    
-    def classification_breaks_wb_to_json(self) -> bytes:
-        result = self.model_dump(
-            mode="json", include={"classification_breaks_wb"}
-        )["classification_breaks_wb"]
-        return json.dumps(result).encode()
-
-    
-    def classification_breaks_ma_to_json(self) -> bytes:
-        result=self.model_dump(
-            mode="json", include={"classification_breaks_ma"}
-        )["classification_breaks_ma"]
-        return json.dumps(result).encode()
-
-    # GeoJSON FeatureCollection containing all computed columns for every building
-    risk_buildings: dict | None = None
-    voronoi_diagram: dict | None = None  # GeoJSON FeatureCollection of Voronoi polygons
-
-    # Head/tail break thresholds for cartographic classification
-    classification_breaks_wb: list[float] | None = None  # for pluvial_flood_risk_well_being
-    classification_breaks_ma: list[float] | None = None  # for pluvial_flood_risk_mobility_accessibility
-
-    validation_report: dict | None = None
-
-
-
-#---------------------------------------------------------------------------
 # Process
-#---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 
 @register_process("pluvial_flood_risk")
@@ -645,22 +570,7 @@ class PluvialFloodRiskProcess(BasePfRProcess, BaseScatterProcess):
             input.n_classification_iterations,
         )
 
-        output_columns = [
-            SENSITIVITY_INDEX,
-            COPING_CAPACITY_INDEX,
-            SOCIAL_VULNERABILITY_INDEX,
-            SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
-            BUILDING_LIVING_AREA_M2,
-            RESIDENTS_PER_BUILDING,
-            RESIDENTS_GROUND_FLOOR,
-            EXPOSURE_MOBILITY_ACCESSIBILITY,
-            HAZARD_WELL_BEING,
-            HAZARD_MOBILITY_ACCESSIBILITY,
-            PLUVIAL_FLOOD_RISK_WELL_BEING,
-            PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
-            RISK_CLASS_WELL_BEING,
-            RISK_CLASS_MOBILITY_ACCESSIBILITY,
-        ]
+        output_columns = list(_OUTPUT_COLUMNS)
 
         # Decide which outputs the client requested (OGC API Processes req. 27:
         # absent "outputs" key → produce all outputs)

@@ -25,11 +25,10 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import ClassVar, cast
+from typing import cast
 
 import geopandas as gpd
 import pandas as pd
-from fastprocesses import BaseProcessResult
 from fastprocesses.core.base_process import BaseParallelProcess
 from fastprocesses.core.models import ProcessDescription
 from fastprocesses.core.types import JobProgressCallback
@@ -47,28 +46,16 @@ from ..algorithms.risk import run_risk_pipeline
 from ..algorithms.vulnerability import run_vulnerability_pipeline
 from ..models.field_names import (
     BUILDING_FOOTPRINT_AREA_M2,
-    BUILDING_LIVING_AREA_M2,
     BUILDING_TYPE,
-    CHILDREN_UNDER_10,
-    COPING_CAPACITY_INDEX,
-    ELDERLY_SINGLES_OVER_65,
-    EXPOSURE_MOBILITY_ACCESSIBILITY,
     FLOORS_ABOVE_GROUND,
     HAZARD_MOBILITY_ACCESSIBILITY,
     HAZARD_WELL_BEING,
     LIVING_AREA_M2_STATISTICAL_UNIT,
-    NO_HIGHSCHOOL_DIPLOMA,
     PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
     PLUVIAL_FLOOD_RISK_WELL_BEING,
-    RESIDENTS_GROUND_FLOOR,
     RESIDENTS_IN_STATISTICAL_UNIT,
-    RESIDENTS_PER_BUILDING,
     RISK_CLASS_MOBILITY_ACCESSIBILITY,
     RISK_CLASS_WELL_BEING,
-    SENSITIVITY_INDEX,
-    SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
-    SOCIAL_VULNERABILITY_INDEX,
-    SOCIAL_WELFARE_RECIPIENTS,
     STATISTICAL_UNIT_ID,
 )
 from ..models.inputs import HazardParams, ProcessInputs, RiskWeights
@@ -79,33 +66,19 @@ from ..spatial_utils import (
     join_statistical_unit_attributes,
     project_crs_to_metric,
 )
-from ._pfr_base import _HAZARD_BUFFER_HALO_M, BasePfRProcess
-from .flood_risk_process import _INPUT_BUILDING_OUTPUT_COLUMNS, PfRiskResult
+from ._pfr_base import (
+    _HAZARD_BUFFER_HALO_M,
+    _INPUT_BUILDING_OUTPUT_COLUMNS,
+    _OUTPUT_COLUMNS,
+    BasePfRProcess,
+    PfRiskResult,
+)
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Partial-result model  (one per statistical unit, Celery-serialised)
 # ---------------------------------------------------------------------------
-
-_OUTPUT_COLUMNS = [
-    SENSITIVITY_INDEX,
-    COPING_CAPACITY_INDEX,
-    SOCIAL_VULNERABILITY_INDEX,
-    SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
-    BUILDING_LIVING_AREA_M2,
-    RESIDENTS_PER_BUILDING,
-    RESIDENTS_GROUND_FLOOR,
-    EXPOSURE_MOBILITY_ACCESSIBILITY,
-    HAZARD_WELL_BEING,
-    HAZARD_MOBILITY_ACCESSIBILITY,
-    PLUVIAL_FLOOD_RISK_WELL_BEING,
-    PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
-    RISK_CLASS_WELL_BEING,
-    RISK_CLASS_MOBILITY_ACCESSIBILITY,
-]
-
-
 class _ChunkResult(BaseModel):
     """Partial risk results for one statistical unit, returned by execute_single.
 
@@ -301,7 +274,10 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         _t0 = time.perf_counter()
 
         # Exposure (living_area_m2_statistical_unit already pre-computed)
-        blds_gdf = run_exposure_pipeline(blds_gdf)
+        _crs = blds_gdf.crs
+        blds_gdf = gpd.GeoDataFrame(
+            run_exposure_pipeline(blds_gdf), geometry="geometry", crs=_crs
+        )
 
         # Hazard WB
         hazard_wb_result = run_hazard_wb_pipeline(blds_gdf, flood_gdf, hazard_params)
