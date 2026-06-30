@@ -103,6 +103,28 @@ logger = logging.getLogger(__name__)
 # (hazard_MA zone 3 = 30 m).
 _HAZARD_BUFFER_HALO_M = 30.0
 
+def _get_boundary_buildings(
+    input: "ProcessInputs",
+    step_name: str,
+) -> list[dict]:
+    """Return building features from the local subset, filtered to calculation_boundary.
+
+    Reads ``buildings_local`` when available (pre-filtered to intersecting
+    statistical units), falling back to the full ``buildings`` collection.
+    When ``calculation_boundary`` is set, applies an additional exact-boundary
+    filter and logs the result.
+    """
+    features: list[dict] = (input.buildings_local or input.buildings)["features"]
+    if input.calculation_boundary is not None:
+        _total = len(features)
+        features = filter_features_to_boundary(features, input.calculation_boundary)
+        logger.info(
+            "%s: calculation_boundary applied — %d/%d buildings in boundary",
+            step_name, len(features), _total,
+        )
+    return features
+
+
 _INPUT_BUILDING_OUTPUT_COLUMNS = [
     FLOORS_ABOVE_GROUND,
     BUILDING_TYPE,
@@ -685,17 +707,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             else None
         )
 
-        buildings_features = (inp.buildings_local or inp.buildings)["features"]
-        if inp.calculation_boundary is not None:
-            _total = len(buildings_features)
-            buildings_features = filter_features_to_boundary(
-                buildings_features, inp.calculation_boundary
-            )
-            logger.info(
-                "hazard_wb_pipeline: calculation_boundary applied "
-                "— %d/%d buildings in boundary",
-                len(buildings_features), _total,
-            )
+        buildings_features = _get_boundary_buildings(inp, "hazard_wb_pipeline")
 
         buildings_gdf = convert_geojson_to_gdf(
             buildings_features, params.target_crs
@@ -758,17 +770,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             else None
         )
 
-        buildings_features = (input.buildings_local or input.buildings)["features"]
-        if input.calculation_boundary is not None:
-            _total = len(buildings_features)
-            buildings_features = filter_features_to_boundary(
-                buildings_features, input.calculation_boundary
-            )
-            logger.info(
-                "hazard_ma_pipeline: calculation_boundary applied "
-                "— %d/%d buildings in boundary",
-                len(buildings_features), _total,
-            )
+        buildings_features = _get_boundary_buildings(input, "hazard_ma_pipeline")
 
         buildings_gdf = convert_geojson_to_gdf(
             buildings_features, input.target_crs
