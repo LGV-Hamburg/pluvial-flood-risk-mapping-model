@@ -13,7 +13,7 @@
 | 0: Process description update | ✅ Complete | Added `{href, type}` reference branches to buildings, streets, flood_layers |
 | 1: OGC Features paging + SSRF | ✅ Complete | `src/pluvial_flood_risk/io/remote.py` — async parallel paging via itemCount, SSRF allowlist, FlatGeobuf decode, semaphore rate-limiting |
 | 2: Input model updates | ✅ Complete | `GlobalStats`; `ProcessInputs.calculation_boundary`; typed geojson-pydantic `FeatureCollection` aliases; `late_validate` + `resolve_remote_inputs` on `PluvialFloodRiskProcess`; `fetch_flatgeobuf` in io layer |
-| 3: Global-stat refactors | Pending | `topsis.py` / `vulnerability.py` — `TopsisStats` (per-step) + `GlobalStats` (full pipeline); injectable for partitioned runs |
+| 3: Global-stat refactors | ✅ Complete | `TopsisStats` + `GlobalStats` in `models/pipeline.py`; `compute_topsis_stats` in `topsis.py`; `compute_global_stats` + injectable `global_stats`/`svi_mean` in `vulnerability.py` |
 | 4: Hamburg process | Pending | `PluvialFloodRiskHamburg(BaseParallelProcess)` + `split_inputs` / `execute_single` / `merge_results` |
 | 5: Hamburg YAML + registration | Pending | Process description + Django/FastAPI route registration |
 | 6: Binary output | Pending | `PfRiskHamburgResult(BaseProcessResult)` + serializers |
