@@ -571,6 +571,47 @@ def fetch_all_references(
     )
 
 
+def fetch_references_cached(
+    ref_map: dict,
+    *,
+    allowed_origins: list[str],
+    page_limit: int,
+    max_concurrent_requests: int,
+) -> "dict[str, dict]":
+    """Fetch remote references, optionally caching to disk via joblib.
+
+    Set ``PFR_DEV_CACHE_DIR`` in your ``.env`` to a writable directory
+    (e.g. ``data/intermediate``) to enable.  The cache is keyed by the
+    function arguments, so changing any URL busts it automatically.
+    Never set this variable in production — it bypasses live data.
+    """
+    import joblib
+    from typing import cast
+
+    cache_dir = os.environ.get("PFR_DEV_CACHE_DIR", "").strip() or None
+    if cache_dir:
+        logger.warning("DEV CACHE active — PFR_DEV_CACHE_DIR=%s", cache_dir)
+    mem = joblib.Memory(cache_dir, verbose=0)
+    _cached = mem.cache(_fetch_all_references_shim)
+    _result = _cached(ref_map, allowed_origins, page_limit, max_concurrent_requests)  # type: ignore[arg-type]
+    return cast("dict[str, dict]", _result)
+
+
+def _fetch_all_references_shim(
+    ref_map: dict,
+    allowed_origins: list[str] | None,
+    page_limit: int,
+    max_concurrent_requests: int,
+) -> "dict[str, dict]":
+    """Positional-args shim around fetch_all_references for joblib caching."""
+    return fetch_all_references(
+        ref_map,
+        allowed_origins=allowed_origins,
+        page_limit=page_limit,
+        max_concurrent_requests=max_concurrent_requests,
+    )
+
+
 def _domain(href: str) -> str:
     """Return scheme://netloc for grouping URLs by server."""
     parsed = urlparse(href)

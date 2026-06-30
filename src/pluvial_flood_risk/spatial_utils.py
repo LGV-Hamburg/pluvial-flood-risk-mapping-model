@@ -205,8 +205,11 @@ def convert_geojson_to_gdf(
     # from_features([]) returns a plain DataFrame with no geometry column;
     # also guard against datasets where all geometries are absent.
     if "geometry" not in gdf.columns:
-        gdf["geometry"] = gpd.GeoSeries(dtype="geometry")
-        return gdf.set_geometry("geometry", crs=source_crs or "EPSG:4326")
+        return gpd.GeoDataFrame(
+            gdf,
+            geometry=gpd.GeoSeries(dtype="geometry"),
+            crs=source_crs or "EPSG:4326",
+        )
     if gdf.crs is None:
         _effective_crs = source_crs or "EPSG:4326"
         # Guard: if the caller declared a projected CRS but the actual
@@ -404,7 +407,7 @@ def expand_boundary_by_meters(boundary: dict, meters: float) -> dict:
     gdf_metric = gdf_metric.copy()
     gdf_metric["geometry"] = gdf_metric.geometry.buffer(meters)
     expanded = gdf_metric.to_crs("EPSG:4326").geometry.iloc[0]
-    return dict(mapping(expanded))
+    return dict(mapping(expanded))  # type: ignore[arg-type]
 
 
 def filter_features_to_intersecting_units(

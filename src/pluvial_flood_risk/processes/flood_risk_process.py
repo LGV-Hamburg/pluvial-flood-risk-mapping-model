@@ -43,7 +43,7 @@ from ..algorithms.hazard_ma import run_hazard_ma_pipeline
 from ..algorithms.hazard_wb import run_hazard_wb_pipeline
 from ..algorithms.risk import run_risk_pipeline
 from ..algorithms.vulnerability import run_vulnerability_pipeline
-from ..io import fetch_all_references
+from ..io import fetch_references_cached
 from ..models.field_names import (
     BUILDING_FOOTPRINT_AREA_M2,
     BUILDING_LIVING_AREA_M2,
@@ -96,48 +96,6 @@ from ..spatial_utils import (
 from ..validation import drop_invalid_features, load_schema_file
 
 logger = logging.getLogger(__name__)
-
-
-def _do_fetch_all_references(
-    ref_map: dict,
-    allowed_origins: list[str] | None,
-    page_limit: int,
-    max_concurrent_requests: int,
-) -> "dict[str, dict]":
-    """Typed shim around fetch_all_references for joblib caching."""
-    return fetch_all_references(
-        ref_map,
-        allowed_origins=allowed_origins,
-        page_limit=page_limit,
-        max_concurrent_requests=max_concurrent_requests,
-    )
-
-
-def _fetch_references_cached(
-    ref_map: dict,
-    *,
-    allowed_origins: list[str],
-    page_limit: int,
-    max_concurrent_requests: int,
-) -> "dict[str, dict]":
-    """Fetch remote references, optionally caching to disk via joblib.
-
-    Set ``PFR_DEV_CACHE_DIR`` in your ``.env`` to a writable directory
-    (e.g. ``data/intermediate``) to enable.  The cache is keyed by the
-    function arguments, so changing any URL busts it automatically.
-    Never set this variable in production — it bypasses live data.
-    """
-    import joblib
-
-    cache_dir = os.environ.get("PFR_DEV_CACHE_DIR", "").strip() or None
-    if cache_dir:
-        logger.warning("DEV CACHE active — PFR_DEV_CACHE_DIR=%s", cache_dir)
-    mem = joblib.Memory(cache_dir, verbose=0)
-    # joblib's MemorizedFunc stubs don't forward the wrapped function's
-    # signature — ignore the spurious arg-type error on the call below.
-    _cached = mem.cache(_do_fetch_all_references)
-    _result = _cached(ref_map, allowed_origins, page_limit, max_concurrent_requests)  # type: ignore[arg-type]
-    return cast("dict[str, dict]", _result)
 
 
 # Halo added to calculation_boundary when pre-filtering streets and flood
@@ -407,7 +365,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                         )
 
         ref_map = {key: inputs[key] for key in references}
-        resolved = _fetch_references_cached(
+        resolved = fetch_references_cached(
             ref_map,
             allowed_origins=allowed_origins,
             page_limit=settings.ogc_page_limit,

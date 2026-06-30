@@ -5,6 +5,7 @@ from .remote import (
     fetch_all_references,
     fetch_flatgeobuf,
     fetch_ogc_features,
+    fetch_references_cached,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "fetch_ogc_features",
     "fetch_flatgeobuf",
     "decode_flatgeobuf_bytes",
+    "fetch_references_cached",
 ]
