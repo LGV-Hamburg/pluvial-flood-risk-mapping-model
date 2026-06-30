@@ -65,7 +65,7 @@ generate_payload() {
             outputs: {
                 voronoi_diagram: {
                     format: {
-                        type: "application/geo+json",
+                        mediaType: "application/geo+json",
                         schema: "https://geojson.org/schema/FeatureCollection.json"
                     },
                     transmissionMode: "value"
