@@ -184,16 +184,29 @@ class PfRiskResult(BaseProcessResult):
         }
 
     def risk_buildings_to_json(self) -> bytes:
-            return self.model_dump_json(include={"risk_buildings"}).encode()
+        result=self.model_dump(
+            mode="json", include={"risk_buildings"}
+        )["risk_buildings"]
+        return json.dumps(result).encode()
     
     def voronoi_diagram_to_json(self) -> bytes:
-            return self.model_dump_json(include={"voronoi_diagram"}).encode()
+        result=self.model_dump(
+            mode="json", include={"voronoi_diagram"}
+        )["voronoi_diagram"]
+        return json.dumps(result).encode()
     
     def classification_breaks_wb_to_json(self) -> bytes:
-            return self.model_dump_json(include={"classification_breaks_wb"}).encode()
+        result = self.model_dump(
+            mode="json", include={"classification_breaks_wb"}
+        )["classification_breaks_wb"]
+        return json.dumps(result).encode()
+
     
     def classification_breaks_ma_to_json(self) -> bytes:
-            return self.model_dump_json(include={"classification_breaks_ma"}).encode()
+        result=self.model_dump(
+            mode="json", include={"classification_breaks_ma"}
+        )["classification_breaks_ma"]
+        return json.dumps(result).encode()
 
     # GeoJSON FeatureCollection containing all computed columns for every building
     risk_buildings: dict | None = None
