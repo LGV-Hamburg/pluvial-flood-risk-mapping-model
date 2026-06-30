@@ -31,7 +31,9 @@ from fastprocesses.core.base_process import BaseScatterProcess, parallel_step
 from fastprocesses.core.models import ProcessDescription
 from fastprocesses.core.types import JobProgressCallback
 from fastprocesses.processes.process_registry import register_process
+from pyproj import CRS as ProjCRS
 from referencing import Registry
+from shapely.geometry import shape as shapely_shape
 
 from ..algorithms.aggregations import create_thiessen_polygons
 from ..algorithms.classification import (
@@ -277,25 +279,15 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         self, exec_body: dict,
         job_progress_callback: JobProgressCallback | None = None
     ) -> dict:
-        """Download any URL-valued inputs and replace them with resolved data.
+        """Download URL-valued inputs and replace them with resolved FeatureCollections.
 
-        Detects ``{href, type}`` reference objects in ``buildings``,
-        ``streets``, and ``flood_layers``.  Inline FeatureCollection dicts
-        are passed through unchanged.
-
-        The SSRF allowlist is read from the ``FP_ALLOWED_INPUT_ORIGINS``
-        environment variable.  Its value must be a JSON array of origin
-        prefixes (e.g. ``'["https://trusted.example.com/"]'``) or a
-        comma-separated list of prefixes.  The variable **must** be set
-        when any URL input is present; an unset or empty value raises
-        ``ValueError``.
-
-        Supported media types (``type`` field of the reference object):
-
-        - ``application/geo+json`` — fetched via OGC API Features paging
-          (:func:`~pluvial_flood_risk.io.fetch_ogc_features`).
-        - ``application/flatgeobuf`` — fetched as raw bytes and decoded via
-          :func:`~pluvial_flood_risk.io.fetch_flatgeobuf`.
+        Detects ``{href, type}`` reference objects in ``buildings``, ``streets``,
+        and ``flood_layers``.  Inline FeatureCollection dicts pass through unchanged.
+        When a ``calculation_boundary`` is present, injects ``bbox`` / ``crs`` /
+        ``bbox-crs`` OGC API parameters into the streets and flood_layers URLs before
+        fetching so only the relevant region is downloaded in the target CRS.
+        After fetching, derives ``buildings_local`` — the city buildings pre-filtered
+        to the statistical units that intersect the boundary.
         """
         inputs = dict(exec_body["inputs"])
         references = [
@@ -307,135 +299,120 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
             return exec_body
 
         logger.info("resolve_remote_inputs: downloading remote inputs: %s", references)
-        allowed_origins = self._load_allowed_origins()
-
-        # When a calculation_boundary is present, narrow the streets and
-        # flood_layers fetch URLs to boundary + halo so that only the relevant
-        # region is downloaded.  Buildings are left unfiltered — the
-        # vulnerability step needs city-wide TOPSIS statistics.
         cb = inputs.get("calculation_boundary")
         if cb is not None:
-            from shapely.geometry import shape as _shape
-            _halo = expand_boundary_by_meters(cb, _HAZARD_BUFFER_HALO_M)
-            _minx, _miny, _maxx, _maxy = _shape(_halo).bounds
-            _bbox = (
-                f"{_minx:.6f},{_miny:.6f},{_maxx:.6f},{_maxy:.6f}"
-            )
-            for key in ("streets", "flood_layers"):
-                if key in references:
-                    ref = dict(inputs[key])
-                    _parsed = urlparse(ref["href"])
-                    _params = parse_qs(_parsed.query, keep_blank_values=True)
-                    _params["bbox"] = [_bbox]
-                    ref["href"] = urlunparse(
-                        _parsed._replace(
-                            query=urlencode(_params, doseq=True)
-                        )
-                    )
-                    inputs[key] = ref
-                    logger.info(
-                        "resolve_remote_inputs: bbox (±%.0fm halo) applied "
-                        "to '%s': %s",
-                        _HAZARD_BUFFER_HALO_M, key, _bbox,
-                    )
-
-
-        # When target_crs is set, request streets and flood_layers in the
-        # projected CRS so they arrive already in metric coordinates.
-        # bbox-crs explicitly tells the server that the existing bbox
-        # parameter (WGS-84 decimal degrees) is in CRS84, not in the
-        # response CRS.  Buildings are excluded — they stay in WGS-84 for
-        # the boundary-based buildings_local pre-filter.
-        # (flatgeobuf references embed their own CRS and are skipped.)
-        _crs_uri: str | None = None
-        _target_crs_str: str | None = (
-            inputs["target_crs"]
-            if isinstance(inputs.get("target_crs"), str) and inputs["target_crs"]
-            else None
-        )
-        if _target_crs_str:
-            from pyproj import CRS as _ProjCRS
-            try:
-                _auth, _code = _ProjCRS.from_user_input(_target_crs_str).to_authority()
-                _crs_uri = f"http://www.opengis.net/def/crs/{_auth}/0/{_code}"
-            except Exception:
-                logger.warning(
-                    "resolve_remote_inputs: could not derive OGC URI for "
-                    "target_crs=%r — crs parameter injection skipped",
-                    _target_crs_str,
-                )
-        _WGS84_URI = "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
-        if _crs_uri:
-            for key in ("streets", "flood_layers"):
-                if key in references:
-                    ref = dict(inputs[key])
-                    if ref.get("type") == "application/geo+json":
-                        _parsed = urlparse(ref["href"])
-                        _params = parse_qs(_parsed.query, keep_blank_values=True)
-                        _params["crs"] = [_crs_uri]
-                        _params["bbox-crs"] = [_WGS84_URI]
-                        ref["href"] = urlunparse(
-                            _parsed._replace(
-                                query=urlencode(_params, doseq=True)
-                            )
-                        )
-                        inputs[key] = ref
-                        logger.debug(
-                            "resolve_remote_inputs: crs=%r bbox-crs=%r "
-                            "injected into '%s'",
-                            _crs_uri, _WGS84_URI, key,
-                        )
-
+            self._inject_bbox_params(inputs, references, cb)
+            self._inject_crs_params(inputs, references, inputs.get("target_crs"))
         ref_map = {key: inputs[key] for key in references}
         resolved = fetch_references_cached(
             ref_map,
-            allowed_origins=allowed_origins,
+            allowed_origins=self._load_allowed_origins(),
             page_limit=settings.ogc_page_limit,
             max_concurrent_requests=settings.max_parallel_requests,
         )
         for key, data in resolved.items():
-            logger.info(
-                "Resolved '%s': %d features",
-                key, len(data.get("features", [])),
-            )
+            logger.info("Resolved '%s': %d features", key, len(data.get("features", [])))
             inputs[key] = data
+
         if cb is not None:
-            units = inputs.get("statistical_units")
-            buildings = inputs.get("buildings")
-            if (
-                isinstance(buildings, dict)
-                and buildings.get("features")
-                and isinstance(units, dict)
-                and units.get("features")
-            ):
-                local_features = filter_features_to_intersecting_units(
-                    buildings["features"],
-                    units["features"],
-                    cb,
-                    expand_boundary_by_meters(cb, _HAZARD_BUFFER_HALO_M),
-                )
-                inputs["buildings_local"] = {
-                    "type": "FeatureCollection",
-                    "features": local_features,
-                }
-                logger.info(
-                    "resolve_remote_inputs: buildings_local = %d / %d features",
-                    len(local_features),
-                    len(buildings.get("features", [])),
-                )
-        # Statistical units diagnostic
-        _stat = inputs.get("statistical_units")
-        if isinstance(_stat, dict):
-            _stat_feats = _stat.get("features") or []
-            logger.debug(
-                "resolve_remote_inputs: statistical_units = %d features",
-                len(_stat_feats),
-            )
+            self._prefilter_buildings_by_boundary_units(inputs, cb)
+
         if job_progress_callback:
-            job_progress_callback(
-                0, "Downloaded remote inputs: %s" % ", ".join(references)
-            )
+            job_progress_callback(0, "Downloaded remote inputs: %s" % ", ".join(references))
         return {**exec_body, "inputs": inputs}
+
+    @staticmethod
+    def _inject_bbox_params(inputs: dict, references: list[str], cb: dict) -> None:
+        """Narrow streets/flood_layers fetch URLs to the boundary+halo bounding box.
+
+        Buildings are intentionally excluded — the vulnerability step needs
+        city-wide TOPSIS statistics.
+        """
+        halo = expand_boundary_by_meters(cb, _HAZARD_BUFFER_HALO_M)
+        minx, miny, maxx, maxy = shapely_shape(halo).bounds
+        bbox = f"{minx:.6f},{miny:.6f},{maxx:.6f},{maxy:.6f}"
+        for key in ("streets", "flood_layers"):
+            if key not in references:
+                continue
+            ref = dict(inputs[key])
+            parsed = urlparse(ref["href"])
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            params["bbox"] = [bbox]
+            ref["href"] = urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
+            inputs[key] = ref
+            logger.info(
+                "resolve_remote_inputs: bbox (±%.0fm halo) applied to '%s': %s",
+                _HAZARD_BUFFER_HALO_M, key, bbox,
+            )
+
+    @staticmethod
+    def _inject_crs_params(inputs: dict, references: list[str], target_crs: object) -> None:
+        """Add ``crs=`` and ``bbox-crs=`` OGC API parameters to streets/flood_layers URLs.
+
+        Requests data in the target projected CRS so features arrive pre-projected.
+        ``bbox-crs`` declares that the existing bbox parameter is in WGS-84 (CRS84),
+        not in the response CRS.  Skipped for flatgeobuf references (embed own CRS)
+        and when ``target_crs`` is absent or unresolvable.
+        """
+        if not isinstance(target_crs, str) or not target_crs:
+            return
+        try:
+            auth, code = ProjCRS.from_user_input(target_crs).to_authority()
+            crs_uri = f"http://www.opengis.net/def/crs/{auth}/0/{code}"
+        except Exception:
+            logger.warning(
+                "resolve_remote_inputs: could not derive OGC URI for "
+                "target_crs=%r — crs parameter injection skipped",
+                target_crs,
+            )
+            return
+        wgs84_uri = "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
+        for key in ("streets", "flood_layers"):
+            if key not in references:
+                continue
+            ref = dict(inputs[key])
+            if ref.get("type") != "application/geo+json":
+                continue
+            parsed = urlparse(ref["href"])
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            params["crs"] = [crs_uri]
+            params["bbox-crs"] = [wgs84_uri]
+            ref["href"] = urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
+            inputs[key] = ref
+            logger.debug(
+                "resolve_remote_inputs: crs=%r bbox-crs=%r injected into '%s'",
+                crs_uri, wgs84_uri, key,
+            )
+
+    @staticmethod
+    def _prefilter_buildings_by_boundary_units(inputs: dict, cb: dict) -> None:
+        """Store a boundary-area subset of city buildings in ``inputs['buildings_local']``.
+
+        Keeps every building that falls inside a statistical unit which intersects
+        the calculation boundary.  Retaining whole units (rather than clipping to
+        the boundary polygon itself) ensures that unit-level aggregations such as
+        the living-area sum and TOPSIS normalisation remain correct for units that
+        straddle the boundary edge.  Falls back to the 30 m halo region when no
+        statistical units are provided.
+        """
+        buildings = inputs.get("buildings")
+        units = inputs.get("statistical_units")
+        if (
+            not (isinstance(buildings, dict) and buildings.get("features"))
+            or not (isinstance(units, dict) and units.get("features"))
+        ):
+            return
+        local_features = filter_features_to_intersecting_units(
+            buildings["features"],
+            units["features"],
+            cb,
+            expand_boundary_by_meters(cb, _HAZARD_BUFFER_HALO_M),
+        )
+        inputs["buildings_local"] = {"type": "FeatureCollection", "features": local_features}
+        logger.info(
+            "resolve_remote_inputs: buildings_local = %d / %d features",
+            len(local_features), len(buildings["features"]),
+        )
 
     @staticmethod
     def _load_allowed_origins() -> list[str]:
