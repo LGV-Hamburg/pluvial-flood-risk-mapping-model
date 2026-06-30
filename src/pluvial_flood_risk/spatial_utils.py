@@ -190,6 +190,23 @@ def convert_geojson_to_gdf(
             for f in features
         ]
     gdf = gpd.GeoDataFrame.from_features(features)
+    # Ensure the "id" column uses the canonical feature ID — the same priority
+    # order that vulnerability_pipeline applies: top-level feature["id"] first,
+    # then feature["properties"]["id"].  from_features() only reads properties,
+    # so when features carry a top-level id (e.g. DEHHALKA strings in Hamburg
+    # city-wide data) that differs from properties.id (integer), the column
+    # would be wrong.  Overwriting it here makes all pipelines consistent.
+    _canonical_ids = [
+        f.get("id") or (f.get("properties") or {}).get("id")
+        for f in features
+    ]
+    if any(x is not None for x in _canonical_ids):
+        gdf["id"] = _canonical_ids
+    # from_features([]) returns a plain DataFrame with no geometry column;
+    # also guard against datasets where all geometries are absent.
+    if "geometry" not in gdf.columns:
+        gdf["geometry"] = gpd.GeoSeries(dtype="geometry")
+        return gdf.set_geometry("geometry", crs=source_crs or "EPSG:4326")
     if gdf.crs is None:
         _effective_crs = source_crs or "EPSG:4326"
         # Guard: if the caller declared a projected CRS but the actual
@@ -198,27 +215,29 @@ def convert_geojson_to_gdf(
         # target_crs is passed as source_crs for remotely-fetched data that
         # the OGC API returned in EPSG:4326.  Fall back to EPSG:4326 so that
         # project_crs_to_metric can reproject correctly.
-        if source_crs and not gdf.empty:
+        if source_crs and not gdf.empty and "geometry" in gdf.columns:
             try:
                 from pyproj import CRS as _ProjCRS
                 if _ProjCRS.from_user_input(source_crs).is_projected:
-                    _bounds = gdf.geometry.dropna().total_bounds
-                    if (
-                        _bounds.size == 4
-                        and abs(_bounds[0]) <= 181
-                        and abs(_bounds[2]) <= 181
-                        and abs(_bounds[1]) <= 91
-                        and abs(_bounds[3]) <= 91
-                    ):
-                        logger.warning(
-                            "convert_geojson_to_gdf: declared CRS %r is "
-                            "projected but coordinates look geographic "
-                            "(bounds %s) — assuming EPSG:4326; data will be "
-                            "reprojected to target CRS by project_crs_to_metric",
-                            source_crs,
-                            tuple(round(float(v), 4) for v in _bounds),
-                        )
-                        _effective_crs = "EPSG:4326"
+                    _valid_geoms = gdf["geometry"].dropna()
+                    if not _valid_geoms.empty:
+                        _bounds = gpd.GeoSeries(_valid_geoms).total_bounds
+                        if (
+                            _bounds.size == 4
+                            and abs(_bounds[0]) <= 181
+                            and abs(_bounds[2]) <= 181
+                            and abs(_bounds[1]) <= 91
+                            and abs(_bounds[3]) <= 91
+                        ):
+                            logger.warning(
+                                "convert_geojson_to_gdf: declared CRS %r is "
+                                "projected but coordinates look geographic "
+                                "(bounds %s) — assuming EPSG:4326; data will be "
+                                "reprojected to target CRS by project_crs_to_metric",
+                                source_crs,
+                                tuple(round(float(v), 4) for v in _bounds),
+                            )
+                            _effective_crs = "EPSG:4326"
             except Exception:
                 pass
         gdf = gdf.set_crs(_effective_crs)
@@ -278,8 +297,8 @@ def filter_gdf_to_boundary(
         GeoDataFrame to filter.  Rows with null geometry are excluded.
     boundary:
         A GeoJSON Polygon/MultiPolygon **geometry** dict, or a **Feature** dict
-        wrapping such a geometry.  The coordinates must be in the same CRS as
-        *gdf*.
+        wrapping such a geometry.  Assumed to be in EPSG:4326 (WGS-84);
+        automatically reprojected to match *gdf*'s CRS when they differ.
 
     Returns
     -------
@@ -294,12 +313,23 @@ def filter_gdf_to_boundary(
         else boundary
     )
     boundary_geom = shape(geom_dict)
-    mask = gdf.geometry.notna() & gdf.geometry.intersects(boundary_geom)
+    # Reproject WGS-84 boundary to the GDF's CRS when they differ so that
+    # the intersection test is CRS-consistent (e.g. after project_crs_to_metric).
+    if gdf.crs is not None:
+        try:
+            _bdf = gpd.GeoDataFrame(geometry=[boundary_geom], crs="EPSG:4326")
+            if _bdf.crs is not None and not _bdf.crs.equals(gdf.crs):
+                boundary_geom = _bdf.to_crs(gdf.crs).geometry.iloc[0]  # type: ignore[assignment]
+        except Exception:
+            pass
+    mask = gdf.geometry.notna() & gdf.geometry.intersects(boundary_geom)  # type: ignore[arg-type]
     return gdf[mask]
 
 
 def filter_features_to_boundary(
-    features: list[dict], boundary: dict
+    features: list[dict],
+    boundary: dict,
+    features_crs: str | None = None,
 ) -> list[dict]:
     """Return only features whose geometry intersects *boundary*.
 
@@ -309,8 +339,12 @@ def filter_features_to_boundary(
         GeoJSON feature dicts (any geometry type).
     boundary:
         A GeoJSON Polygon/MultiPolygon **geometry** dict, or a **Feature** dict
-        wrapping such a geometry.  The coordinates must be in the same CRS as
-        *features* (typically EPSG:4326 for raw GeoJSON inputs).
+        wrapping such a geometry.  Assumed to be in EPSG:4326 (WGS-84).
+    features_crs:
+        CRS of *features* as an EPSG token or OGC URI.  When supplied and
+        different from WGS-84, the boundary is reprojected to this CRS so that
+        the intersection test is CRS-consistent.  Pass ``target_crs`` here
+        when features were fetched from an OGC API in a projected CRS.
 
     Returns
     -------
@@ -326,10 +360,16 @@ def filter_features_to_boundary(
         else boundary
     )
     boundary_geom = shape(geom_dict)
+    if features_crs:
+        try:
+            _bdf = gpd.GeoDataFrame(geometry=[boundary_geom], crs="EPSG:4326")
+            boundary_geom = _bdf.to_crs(features_crs).geometry.iloc[0]  # type: ignore[assignment]
+        except Exception:
+            pass
 
     return [
         f for f in features
-        if (g := f.get("geometry")) and shape(g).intersects(boundary_geom)
+        if (g := f.get("geometry")) and shape(g).intersects(boundary_geom)  # type: ignore[arg-type]
     ]
 
 

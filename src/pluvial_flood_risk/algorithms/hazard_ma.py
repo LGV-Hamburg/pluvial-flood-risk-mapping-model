@@ -208,11 +208,12 @@ def compute_mobility_flood_fractions(
     #      vertex counts without affecting the 5/15/30 m buffer areas
     # Both are cheap no-ops when geometries are already clean.
     # ------------------------------------------------------------------
+    _bld_crs = bld.crs
     _bld_geom_raw = bld.geometry.values
     _bld_geom_valid = shapely.make_valid(_bld_geom_raw)
     _bld_arr = shapely.simplify(_bld_geom_valid, tolerance=0.1, preserve_topology=True)
     bld = bld.set_geometry(
-        gpd.array.GeometryArray(_bld_arr), crs=bld.crs  # type: ignore[arg-type]
+        gpd.GeoSeries(_bld_arr, index=bld.index, crs=_bld_crs)
     )
     logger.debug(
         "MA buildings after make_valid+simplify: "

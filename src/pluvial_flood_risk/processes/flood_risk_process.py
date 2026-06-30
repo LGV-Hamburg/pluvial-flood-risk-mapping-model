@@ -184,16 +184,16 @@ class PfRiskResult(BaseProcessResult):
         }
 
     def risk_buildings_to_json(self) -> bytes:
-            return self.model_dump_json().encode()
+            return self.model_dump_json(include={"risk_buildings"}).encode()
     
     def voronoi_diagram_to_json(self) -> bytes:
-            return self.model_dump_json().encode()
+            return self.model_dump_json(include={"voronoi_diagram"}).encode()
     
     def classification_breaks_wb_to_json(self) -> bytes:
-            return self.model_dump_json().encode()
+            return self.model_dump_json(include={"classification_breaks_wb"}).encode()
     
     def classification_breaks_ma_to_json(self) -> bytes:
-            return self.model_dump_json().encode()
+            return self.model_dump_json(include={"classification_breaks_ma"}).encode()
 
     # GeoJSON FeatureCollection containing all computed columns for every building
     risk_buildings: dict | None = None
@@ -346,11 +346,14 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                         _HAZARD_BUFFER_HALO_M, key, _bbox,
                     )
 
+
         # When target_crs is set, request streets and flood_layers in the
-        # projected CRS so they arrive in metric coordinates.  Buildings are
-        # intentionally excluded: they must remain in WGS-84 for the
-        # boundary-based buildings_local pre-filter below.
-        # (flatgeobuf references are skipped — CRS is embedded in the file.)
+        # projected CRS so they arrive already in metric coordinates.
+        # bbox-crs explicitly tells the server that the existing bbox
+        # parameter (WGS-84 decimal degrees) is in CRS84, not in the
+        # response CRS.  Buildings are excluded — they stay in WGS-84 for
+        # the boundary-based buildings_local pre-filter.
+        # (flatgeobuf references embed their own CRS and are skipped.)
         _crs_uri: str | None = None
         _target_crs_str: str | None = (
             inputs["target_crs"]
@@ -368,6 +371,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                     "target_crs=%r — crs parameter injection skipped",
                     _target_crs_str,
                 )
+        _WGS84_URI = "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
         if _crs_uri:
             for key in ("streets", "flood_layers"):
                 if key in references:
@@ -376,6 +380,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                         _parsed = urlparse(ref["href"])
                         _params = parse_qs(_parsed.query, keep_blank_values=True)
                         _params["crs"] = [_crs_uri]
+                        _params["bbox-crs"] = [_WGS84_URI]
                         ref["href"] = urlunparse(
                             _parsed._replace(
                                 query=urlencode(_params, doseq=True)
@@ -383,8 +388,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
                         )
                         inputs[key] = ref
                         logger.debug(
-                            "resolve_remote_inputs: crs=%r injected into '%s'",
-                            _crs_uri, key,
+                            "resolve_remote_inputs: crs=%r bbox-crs=%r "
+                            "injected into '%s'",
+                            _crs_uri, _WGS84_URI, key,
                         )
 
         ref_map = {key: inputs[key] for key in references}
@@ -731,7 +737,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         if _halo_boundary is not None:
             _original = len(flood_features)
             flood_features = filter_features_to_boundary(
-                flood_features, _halo_boundary
+                flood_features, _halo_boundary, params.target_crs
             )
             logger.info(
                 "hazard_wb_pipeline: boundary +%.0fm halo applied to flood_layers "
@@ -804,7 +810,7 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         if _halo_boundary is not None:
             _original = len(streets_features)
             streets_features = filter_features_to_boundary(
-                streets_features, _halo_boundary
+                streets_features, _halo_boundary, input.target_crs
             )
             logger.info(
                 "hazard_ma_pipeline: boundary +%.0fm halo applied to streets "
@@ -826,7 +832,9 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         ]
         if _halo_boundary is not None:
             _original = len(ma_features)
-            ma_features = filter_features_to_boundary(ma_features, _halo_boundary)
+            ma_features = filter_features_to_boundary(
+                ma_features, _halo_boundary, input.target_crs
+            )
             logger.info(
                 "hazard_ma_pipeline: boundary +%.0fm halo applied to flood_layers "
                 "— %d/%d features in region (level_cm=%d)",
@@ -904,9 +912,12 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         # None means "outputs" was absent → produce all outputs (OGC req. 27)
         requested = exec_body.get("outputs")
 
-        buildings_features = (input.buildings_local or input.buildings)["features"]
+        buildings_features = (input.buildings_local or input.buildings).get(
+            "features"
+        )
+
         _boundary_ids: set[str] | None = None
-        if input.calculation_boundary is not None:
+        if input.calculation_boundary is not None and buildings_features is not None:
             original_count = len(buildings_features)
             buildings_features = filter_features_to_boundary(
                 buildings_features, input.calculation_boundary
@@ -994,11 +1005,17 @@ class PluvialFloodRiskProcess(BaseScatterProcess):
         enriched_features = None
         source_buildings_gdf = None
         if want_risk_buildings or want_voronoi:
-            enriched_features, source_buildings_gdf = build_enriched_features(
-                buildings_features, classified, input,
-                output_columns, candidate_cols,
-                _INPUT_BUILDING_OUTPUT_COLUMNS,
-            )
+            if buildings_features is not None:
+                enriched_features, source_buildings_gdf = build_enriched_features(
+                    buildings_features, classified, input,
+                    output_columns, candidate_cols,
+                    _INPUT_BUILDING_OUTPUT_COLUMNS,
+                )
+            else:
+                logger.warning(
+                    "merge_results: buildings geometry unavailable — "
+                    "risk_buildings and voronoi_diagram will be empty"
+                )
 
         risk_buildings = {
             "type": "FeatureCollection", "features": enriched_features or []
