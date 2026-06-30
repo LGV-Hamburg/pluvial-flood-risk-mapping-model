@@ -14,6 +14,8 @@ from fastprocesses.api.server import OGCProcessesAPI
 from fastprocesses.common import settings
 from fastprocesses.processes.process_registry import get_process_registry
 
+import pluvial_flood_risk.processes.citywide_process  # noqa: F401
+
 # Import the process module so that @register_process fires and
 # PluvialFloodRiskProcess appears in the OGC process registry.
 import pluvial_flood_risk.processes.flood_risk_process  # noqa: F401
