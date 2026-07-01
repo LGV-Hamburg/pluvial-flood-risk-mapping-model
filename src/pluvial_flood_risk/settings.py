@@ -13,7 +13,7 @@ Set via environment before starting the worker::
 import json
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -74,42 +74,37 @@ class PfrSettings(BaseSettings):
     Set ``PFR_DEV_CACHE_DIR=data/intermediate`` to enable.
     """
 
-    allowed_input_origins: list[str] = Field(
-        default=[]
+    pfr_allowed_input_origins: str = Field(
+        default="",
+        alias="PFR_ALLOWED_INPUT_ORIGINS",
     )
-    """Allowlist of trusted URL origins for user-supplied ``{href, type}``
-    reference inputs in ``PluvialFloodRiskProcess``.
 
-    Accepted formats: JSON array (``'["https://example.com"]'``) or
-    comma-separated string (``'https://a.com,https://b.com'``).
+    @computed_field
+    @property
+    def allowed_input_origins(self) -> list[str]:
+        """Allowlist of trusted URL origins for user-supplied ``{href, type}``
+        reference inputs in ``PluvialFloodRiskProcess``.
 
-    Must be set before accepting any URL-valued inputs; absence causes
-    ``resolve_remote_inputs`` to raise a ``ValueError``.
+        Accepted formats: JSON array (``'["https://example.com"]'``) or
+        comma-separated string (``'https://a.com,https://b.com'``).
 
-    Set ``FP_ALLOWED_INPUT_ORIGINS='["https://trusted.example.com/"]'``.
-    """
+        Must be non-empty before accepting URL-valued inputs; absence causes
+        ``resolve_remote_inputs`` to raise a ``ValueError``.
 
-    @field_validator("allowed_input_origins", mode="before")
-    @classmethod
-    def _parse_allowed_origins(cls, v: object) -> list[str]:
+        Set ``FP_ALLOWED_INPUT_ORIGINS='["https://trusted.example.com/"]'``.
+        """
+        v = self._fp_allowed_input_origins.strip()
         if not v:
             return []
-        if isinstance(v, list):
-            return [str(o) for o in v]
-        if isinstance(v, str):
-            v = v.strip()
-            if not v:
-                return []
-            try:
-                parsed = json.loads(v)
-                if not isinstance(parsed, list):
-                    raise ValueError(
-                        "FP_ALLOWED_INPUT_ORIGINS must be a JSON array."
-                    )
-                return [str(o) for o in parsed]
-            except json.JSONDecodeError:
-                return [o.strip() for o in v.split(",") if o.strip()]
-        raise ValueError(f"Cannot parse FP_ALLOWED_INPUT_ORIGINS: {v!r}")
+        try:
+            parsed = json.loads(v)
+            if not isinstance(parsed, list):
+                raise ValueError(
+                    "FP_ALLOWED_INPUT_ORIGINS must be a JSON array."
+                )
+            return [str(o) for o in parsed]
+        except json.JSONDecodeError:
+            return [o.strip() for o in v.split(",") if o.strip()]
 
 
 settings = PfrSettings()
