@@ -29,6 +29,17 @@ class PfrSettings(BaseSettings):
 
     process_description_pfr_citywide_file: Path | None = None
 
+    citywide_chunk_size: int = 1
+    """Number of statistical units batched into a single Celery worker task for
+    the citywide process.
+
+    Increase to reduce worker count when individual units are small (e.g. set
+    to ``5`` to process 5 units per worker).  The default of ``1`` preserves
+    the original one-worker-per-unit behaviour.
+
+    Set ``PFR_CITYWIDE_CHUNK_SIZE=<n>`` to override.
+    """
+
     max_parallel_requests: int = 10
     """Maximum number of concurrent HTTP requests allowed when downloading
     remote inputs (semaphore passed to ``fetch_all_references``).

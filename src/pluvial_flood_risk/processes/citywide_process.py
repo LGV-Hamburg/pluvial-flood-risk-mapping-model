@@ -103,6 +103,72 @@ class _ChunkResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _batch_unit_items(items: list[dict], chunk_size: int) -> list[dict]:
+    """Group per-unit work items into batches of *chunk_size* units each.
+
+    Buildings are simply concatenated (they are disjoint by construction).
+    Streets and flood features shared between adjacent unit halos are
+    deduplicated by GeoJSON ``id``; features without an ``id`` are always
+    included.
+
+    Args:
+        items: Per-unit work items produced by the partitioning loop in
+            ``split_inputs``. Each item must contain ``"buildings"``,
+            ``"streets"``, and ``"flood_layers"`` GeoJSON FeatureCollections
+            and a ``"unit_id"`` string.
+        chunk_size: Maximum number of statistical units per batch.
+
+    Returns:
+        Batched work items.  Returns *items* unchanged when
+        ``chunk_size <= 1`` or ``len(items) <= chunk_size``.
+    """
+    if chunk_size <= 1 or len(items) <= chunk_size:
+        return items
+
+    shared_params = {
+        k: v for k, v in items[0].items()
+        if k not in ("unit_id", "buildings", "streets", "flood_layers")
+    }
+
+    batched: list[dict] = []
+    for i in range(0, len(items), chunk_size):
+        batch = items[i : i + chunk_size]
+
+        merged_buildings = [
+            f for itm in batch for f in itm["buildings"]["features"]
+        ]
+
+        streets_seen: set[object] = set()
+        merged_streets: list[dict] = []
+        for itm in batch:
+            for f in itm["streets"]["features"]:
+                fid = f.get("id")
+                if fid is None or fid not in streets_seen:
+                    merged_streets.append(f)
+                    if fid is not None:
+                        streets_seen.add(fid)
+
+        flood_seen: set[object] = set()
+        merged_flood: list[dict] = []
+        for itm in batch:
+            for f in itm["flood_layers"]["features"]:
+                fid = f.get("id")
+                if fid is None or fid not in flood_seen:
+                    merged_flood.append(f)
+                    if fid is not None:
+                        flood_seen.add(fid)
+
+        batched.append({
+            **shared_params,
+            "unit_id": ",".join(itm["unit_id"] for itm in batch),
+            "buildings": {"type": "FeatureCollection", "features": merged_buildings},
+            "streets": {"type": "FeatureCollection", "features": merged_streets},
+            "flood_layers": {"type": "FeatureCollection", "features": merged_flood},
+        })
+
+    return batched
+
+
 @register_process("pluvial-flood-risk-citywide")
 class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
     """Pluvial flood risk at building level — city-wide data fan-out variant.
@@ -225,9 +291,12 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
                 "flood_layers": json.loads(halo_flood.to_json()),
             })
 
+        n_units = len(items)
+        items = _batch_unit_items(items, settings.citywide_chunk_size)
+
         logger.info(
             "split_inputs: %d statistical units → %d work items (%.1fs total)",
-            len(items), len(items), time.perf_counter() - _t0,
+            n_units, len(items), time.perf_counter() - _t0,
         )
         return items
 
