@@ -103,7 +103,7 @@ class _ChunkResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@register_process("pluvial_flood_risk_citywide")
+@register_process("pluvial-flood-risk-citywide")
 class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
     """Pluvial flood risk at building level — city-wide data fan-out variant.
 

@@ -113,7 +113,7 @@ def _get_boundary_buildings(
 # ---------------------------------------------------------------------------
 
 
-@register_process("pluvial_flood_risk")
+@register_process("pluvial-flood-risk-regional")
 class PluvialFloodRiskProcess(BasePfRProcess, BaseScatterProcess):
     """Pluvial flood risk at building level following Vogelbacher et al. (2025).
 
