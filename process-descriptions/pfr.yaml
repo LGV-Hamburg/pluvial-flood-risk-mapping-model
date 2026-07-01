@@ -1,11 +1,14 @@
-id: pluvial-flood-risk
-title: "Pluvial Flood Risk"
+id: pluvial-flood-risk-regional
+title: "Pluvial Flood Risk (Regional)"
 version: "1.0.0"
 description: >-
   Calculates building-level pluvial flood risk indices (PFR_WB, PFR_MA)
   following the IPCC risk framework (Vogelbacher et al., 2025): Risk = Hazard^a
   x Exposure^b x Vulnerability^c. The four sub-pipelines run in parallel via a
-  scatter-gather pattern.
+  scatter-gather pattern. Use this process for regional computations. Process steps which require
+  to be global will be computed for the whole dataset provided. All other steps will be computed 
+  for the calculation boundary if one is provided. 
+  For city-wide computations, use the 'pluvial-flood-risk-citywide' process instead.
 jobControlOptions:
   - async-execute
 outputTransmission:

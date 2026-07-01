@@ -5,7 +5,10 @@ description: >-
   Calculates building-level pluvial flood risk indices (PFR_WB, PFR_MA)
   following the IPCC risk framework (Vogelbacher et al., 2025): Risk = Hazard^a
   x Exposure^b x Vulnerability^c. The four sub-pipelines run in parallel via a
-  data fan-out pattern: vulnerability runs globally across all buildings, then each statistical unit is processed on a separate worker (N-way data parallelism). Prefer this variant for full-city runs; use pluvial_flood_risk for focused sub-area analysis.
+  data fan-out pattern: vulnerability runs globally across all buildings, 
+  then each statistical unit is processed on a separate worker (N-way data parallelism). 
+  Prefer this variant for full-city runs; use pluvial-flood-risk-regional for 
+  focused sub-area analysis.
 jobControlOptions:
   - async-execute
 outputTransmission:
