@@ -56,7 +56,7 @@ COPY --from=base \
     --chown=$USERNAME:$USERNAME \
     ${VIRTUAL_ENV} ./.venv
 
-COPY --chown=$USERNAME:$USER_GID app.py process_descriptions/* ./
+COPY --chown=$USERNAME:$USER_GID app.py process-descriptions/* ./
 
 COPY --chown=$USERNAME:$USER_GID schemas /app/schemas
 
