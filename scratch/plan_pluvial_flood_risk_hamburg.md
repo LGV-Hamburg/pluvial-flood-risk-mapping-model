@@ -14,9 +14,9 @@
 | 1: OGC Features paging + SSRF | ✅ Complete | `src/pluvial_flood_risk/io/remote.py` — async parallel paging via itemCount, SSRF allowlist, FlatGeobuf decode, semaphore rate-limiting |
 | 2: Input model updates | ✅ Complete | `GlobalStats`; `ProcessInputs.calculation_boundary`; typed geojson-pydantic `FeatureCollection` aliases; `late_validate` + `resolve_remote_inputs` on `PluvialFloodRiskProcess`; `fetch_flatgeobuf` in io layer |
 | 3: Global-stat refactors | ✅ Complete | `TopsisStats` + `GlobalStats` in `models/pipeline.py`; `compute_topsis_stats` in `topsis.py`; `compute_global_stats` + injectable `global_stats`/`svi_mean` in `vulnerability.py` |
-| 4: Hamburg process | Pending | `PluvialFloodRiskHamburg(BaseParallelProcess)` + `split_inputs` / `execute_single` / `merge_results` |
-| 5: Hamburg YAML + registration | Pending | Process description + Django/FastAPI route registration |
-| 6: Binary output | Pending | `PfRiskHamburgResult(BaseProcessResult)` + serializers |
+| 4: Hamburg process | ✅ Complete | `PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess)` in `citywide_process.py`; `BasePfRProcess` mixin extracted to `_pfr_base.py`; `_ChunkResult` partial model; `split_inputs`/`execute_single`/`merge_results` implemented |
+| 5: Hamburg YAML + registration | ✅ Complete | Process description + Django/FastAPI route registration (YAML file and `citywide_process.py` created) |
+| 6: Binary output | ✅ Complete | `PfRiskHamburgResult(BaseProcessResult)` + serializers |
 | 7: Tests | Pending | Phases 1–8 test coverage |
 
 ---
