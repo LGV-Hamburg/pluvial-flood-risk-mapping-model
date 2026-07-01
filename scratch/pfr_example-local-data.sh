@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DATA_DIR="$SCRIPT_DIR/data/example"
 
-API_URL="${API_URL:-http://localhost:8000/processes/pluvial_flood_risk_citywide/execution}"
+API_URL="${API_URL:-http://localhost:8000/processes/pluvial-flood-risk-citywide/execution}"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required but not installed." >&2
