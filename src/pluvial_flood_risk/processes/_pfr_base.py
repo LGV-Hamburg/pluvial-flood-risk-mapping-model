@@ -9,6 +9,7 @@ This module extracts that shared logic so neither process class duplicates it.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ from collections import Counter
 from typing import ClassVar
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+import geopandas as gpd
 from fastprocesses import BaseProcessResult
 from pyproj import CRS as ProjCRS
 from referencing import Registry
@@ -401,9 +403,11 @@ class PfRiskResult(BaseProcessResult):
     output_serializers: ClassVar = {
         "risk_buildings": {
             "application/geo+json": "risk_buildings_to_json",
+            "application/flatgeobuf": "risk_buildings_to_fgb",
         },
         "voronoi_diagram": {
             "application/geo+json": "voronoi_diagram_to_json",
+            "application/flatgeobuf": "voronoi_diagram_to_fgb",
         },
         "classification_breaks_wb": {
             "application/json": "classification_breaks_wb_to_json",
@@ -413,13 +417,35 @@ class PfRiskResult(BaseProcessResult):
         },
     }
 
+    @staticmethod
+    def _fc_to_fgb(fc: dict) -> bytes:
+        """Serialise a GeoJSON FeatureCollection dict to FlatGeobuf bytes."""
+        gdf = gpd.GeoDataFrame.from_features(fc["features"], crs="EPSG:4326")
+        buf = io.BytesIO()
+        gdf.to_file(buf, driver="FlatGeobuf")
+        return buf.getvalue()
+
     def risk_buildings_to_json(self) -> bytes:
-        result = self.model_dump(mode="json", include={"risk_buildings"})["risk_buildings"]
+        result = self.model_dump(
+            mode="json", include={"risk_buildings"}
+        )["risk_buildings"]
         return json.dumps(result).encode()
 
+    def risk_buildings_to_fgb(self) -> bytes:
+        fc = self.model_dump(mode="json", include={"risk_buildings"})["risk_buildings"]
+        return self._fc_to_fgb(fc)
+
     def voronoi_diagram_to_json(self) -> bytes:
-        result = self.model_dump(mode="json", include={"voronoi_diagram"})["voronoi_diagram"]
+        result = self.model_dump(
+            mode="json", include={"voronoi_diagram"}
+        )["voronoi_diagram"]
         return json.dumps(result).encode()
+
+    def voronoi_diagram_to_fgb(self) -> bytes:
+        fc = self.model_dump(
+            mode="json", include={"voronoi_diagram"}
+        )["voronoi_diagram"]
+        return self._fc_to_fgb(fc)
 
     def classification_breaks_wb_to_json(self) -> bytes:
         result = self.model_dump(

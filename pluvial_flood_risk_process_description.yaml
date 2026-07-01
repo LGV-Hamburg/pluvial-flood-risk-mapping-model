@@ -403,9 +403,13 @@ outputs:
       hazard_mobility_accessibility, pluvial_flood_risk_well_being,
       pluvial_flood_risk_mobility_accessibility, risk_class_wb, risk_class_ma.
     schema:
-      allOf:
-        - format: geojson-feature-collection
-        - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+      oneOf:
+        - allOf:
+            - format: geojson-feature-collection
+            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+        - type: string
+          contentMediaType: application/flatgeobuf
+          contentEncoding: binary
   classification_breaks_wb:
     title: "Classification Breaks — Well-Being"
     description: >-
@@ -433,9 +437,13 @@ outputs:
       choropleth mapping when building footprints are too small for direct
       visualisation at the target map scale.
     schema:
-      allOf:
-        - format: geojson-feature-collection
-        - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+      oneOf:
+        - allOf:
+            - format: geojson-feature-collection
+            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+        - type: string
+          contentMediaType: application/flatgeobuf
+          contentEncoding: binary
   # validation_report:
   #   title: "Validation Report"
   #   description: >-
