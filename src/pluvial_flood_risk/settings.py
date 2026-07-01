@@ -75,8 +75,7 @@ class PfrSettings(BaseSettings):
     """
 
     allowed_input_origins: list[str] = Field(
-        default=[],
-        validation_alias="FP_ALLOWED_INPUT_ORIGINS",
+        default=[]
     )
     """Allowlist of trusted URL origins for user-supplied ``{href, type}``
     reference inputs in ``PluvialFloodRiskProcess``.
