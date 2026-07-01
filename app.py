@@ -22,12 +22,12 @@ import pluvial_flood_risk.processes.flood_risk_process  # noqa: F401
 
 # Fail loudly at startup if the expected process was not registered.
 # This catches accidental removal of the import above before any request is served.
-_REQUIRED_PROCESSES = {"pluvial_flood_risk"}
+_REQUIRED_PROCESSES = {"pluvial-flood-risk-regional", "pluvial-flood-risk-citywide"}
 _registered = set(get_process_registry().get_process_ids())
 _missing = _REQUIRED_PROCESSES - _registered
 
 # Module-level logger for the app
-logger = logging.getLogger("pluvial_flood_risk")
+logger = logging.getLogger("pluvial-flood-risk")
 
 
 if _missing:
