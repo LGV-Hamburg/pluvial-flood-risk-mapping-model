@@ -283,21 +283,34 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
             run_exposure_pipeline(blds_gdf), geometry="geometry", crs=_crs
         )
 
-        # Hazard WB
-        hazard_wb_result = run_hazard_wb_pipeline(blds_gdf, flood_gdf, hazard_params)
-        blds_gdf[HAZARD_WELL_BEING] = hazard_wb_result[HAZARD_WELL_BEING]
+        if flood_gdf.empty:
+            # No flood features intersect this unit's halo — hazard is 0.
+            # (Column schema is lost on empty serialised GDFs so hazard pipelines
+            # would raise; setting 0 is semantically correct: no flood = no hazard.)
+            logger.warning(
+                "execute_single[%s]: no flood features in halo — hazard set to 0",
+                unit_id,
+            )
+            blds_gdf[HAZARD_WELL_BEING] = 0.0
+            blds_gdf[HAZARD_MOBILITY_ACCESSIBILITY] = 0.0
+        else:
+            # Hazard WB
+            hazard_wb_result = run_hazard_wb_pipeline(blds_gdf, flood_gdf, hazard_params)
+            blds_gdf[HAZARD_WELL_BEING] = hazard_wb_result[HAZARD_WELL_BEING]
 
-        # Hazard MA
-        ma_level = hazard_params.ma_flood_level_cm
-        ma_flood = flood_gdf[
-            flood_gdf["level_cm"] == ma_level
-        ] if "level_cm" in flood_gdf.columns else flood_gdf
-        hazard_ma_result = run_hazard_ma_pipeline(
-            blds_gdf, streets_gdf, ma_flood, hazard_params
-        )
-        blds_gdf[HAZARD_MOBILITY_ACCESSIBILITY] = hazard_ma_result[
-            HAZARD_MOBILITY_ACCESSIBILITY
-        ]
+            # Hazard MA
+            ma_level = hazard_params.ma_flood_level_cm
+            ma_flood = (
+                flood_gdf[flood_gdf["level_cm"] == ma_level]
+                if "level_cm" in flood_gdf.columns
+                else flood_gdf
+            )
+            hazard_ma_result = run_hazard_ma_pipeline(
+                blds_gdf, streets_gdf, ma_flood, hazard_params
+            )
+            blds_gdf[HAZARD_MOBILITY_ACCESSIBILITY] = hazard_ma_result[
+                HAZARD_MOBILITY_ACCESSIBILITY
+            ]
 
         # Risk
         risk_result = run_risk_pipeline(blds_gdf, risk_weights)
