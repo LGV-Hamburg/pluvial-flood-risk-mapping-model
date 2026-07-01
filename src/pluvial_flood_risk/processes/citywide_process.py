@@ -253,15 +253,19 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         risk_weights = RiskWeights(**item["risk_weights"])
         unit_id = item.get("unit_id", "?")
 
-        # Reconstruct GDFs from serialised GeoJSON (coordinates in metric CRS)
-        blds_gdf = gpd.GeoDataFrame.from_features(
-            item["buildings"]["features"], crs=target_crs
+        # Reconstruct GDFs from serialised GeoJSON (coordinates in metric CRS).
+        # Use convert_geojson_to_gdf so that empty feature lists (e.g. a unit
+        # with no streets or flood features in its halo) are handled safely —
+        # gpd.GeoDataFrame.from_features([], crs=...) raises ValueError in
+        # geopandas 1.1 because the returned plain DataFrame has no geometry column.
+        blds_gdf = convert_geojson_to_gdf(
+            item["buildings"]["features"], target_crs
         )
-        streets_gdf = gpd.GeoDataFrame.from_features(
-            item["streets"]["features"], crs=target_crs
+        streets_gdf = convert_geojson_to_gdf(
+            item["streets"]["features"], target_crs
         )
-        flood_gdf = gpd.GeoDataFrame.from_features(
-            item["flood_layers"]["features"], crs=target_crs
+        flood_gdf = convert_geojson_to_gdf(
+            item["flood_layers"]["features"], target_crs
         )
 
         if "id" in blds_gdf.columns:
@@ -412,7 +416,7 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         if want_voronoi and enriched_features:
             from ..algorithms.aggregations import create_thiessen_polygons
             from ..spatial_utils import project_crs_to_metric
-            blds_gdf_wgs = gpd.GeoDataFrame.from_features(enriched_features, crs="EPSG:4326")
+            blds_gdf_wgs = convert_geojson_to_gdf(enriched_features, "EPSG:4326")
             blds_metric_v = project_crs_to_metric(blds_gdf_wgs, inp.target_crs)
             voronoi_diagram_fc = json.loads(
                 create_thiessen_polygons(blds_metric_v).to_crs("EPSG:4326").to_json()
