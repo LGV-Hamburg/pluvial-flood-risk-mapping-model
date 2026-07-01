@@ -74,7 +74,6 @@ from ..spatial_utils import (
     join_statistical_unit_attributes,
     project_crs_to_metric,
 )
-from ..validation import load_schema_file
 from ._pfr_base import (
     _HAZARD_BUFFER_HALO_M,
     _INPUT_BUILDING_OUTPUT_COLUMNS,
