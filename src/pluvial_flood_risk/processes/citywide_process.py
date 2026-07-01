@@ -35,6 +35,8 @@ from fastprocesses.core.types import JobProgressCallback
 from fastprocesses.processes.process_registry import register_process
 from pydantic import BaseModel
 
+from pluvial_flood_risk.settings import settings
+
 from ..algorithms.aggregations import create_thiessen_polygons
 from ..algorithms.classification import (
     ClassificationResult,
@@ -113,7 +115,7 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
     """
 
     process_description = ProcessDescription.from_yaml(
-        "pluvial_flood_risk_citywide_process_description.yaml"
+        str(settings.process_description_pfr_citywide_file)
     )
 
     # ------------------------------------------------------------------

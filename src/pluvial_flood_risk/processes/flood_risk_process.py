@@ -65,6 +65,7 @@ from ..models.field_names import (
 )
 from ..models.inputs import ProcessInputs
 from ..serialization import build_enriched_features, serialize_output_value
+from ..settings import settings
 from ..spatial_utils import (
     convert_geojson_to_gdf,
     expand_boundary_by_meters,
@@ -141,7 +142,7 @@ class PluvialFloodRiskProcess(BasePfRProcess, BaseScatterProcess):
     """
 
     process_description = ProcessDescription.from_yaml(
-        "pluvial_flood_risk_process_description.yaml"
+        str(settings.process_description_pfr_file)
     )
 
     # ------------------------------------------------------------------

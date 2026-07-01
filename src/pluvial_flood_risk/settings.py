@@ -11,6 +11,7 @@ Set via environment before starting the worker::
 """
 
 import json
+from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,6 +21,13 @@ class PfrSettings(BaseSettings):
     """Environment-driven settings for the pluvial flood risk pipeline."""
 
     model_config = SettingsConfigDict(env_prefix="PFR_", case_sensitive=False)
+
+    process_description_pfr_file: Path | None = None
+    """Path to a JSON file containing the process description for the
+    PluvialFloodRiskProcess. If set, the file path is given
+    """
+
+    process_description_pfr_citywide_file: Path | None = None
 
     max_parallel_requests: int = 10
     """Maximum number of concurrent HTTP requests allowed when downloading
