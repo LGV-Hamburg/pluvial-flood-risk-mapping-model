@@ -47,8 +47,8 @@ generate_payload() {
                 target_crs: "http://www.opengis.net/def/crs/EPSG/0/25832",
                 vulnerability_parameters: {
                     sensitivity_weights: {
-                        children_under_10: 0.491,
-                        elderly_singles_over_65: 0.509
+                        children_under_10: 0.5,
+                        elderly_singles_over_65: 0.5
                     }
                 },
                 calculation_boundary: {

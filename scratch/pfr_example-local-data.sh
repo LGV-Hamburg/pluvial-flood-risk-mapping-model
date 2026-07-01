@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DATA_DIR="$SCRIPT_DIR/data/example"
 
-API_URL="${API_URL:-http://localhost:8000/processes/pluvial_flood_risk/execution}"
+API_URL="${API_URL:-http://localhost:8000/processes/pluvial_flood_risk_citywide/execution}"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required but not installed." >&2
@@ -35,12 +35,11 @@ generate_payload() {
             outputs: {
                 voronoi_diagram: {
                     format: {
-                        type: "application/geo+json",
-                        schema: "https://geojson.org/schema/FeatureCollection.json"
+                        mediaType: "application/flatgeobuf"
                     },
                 },
             },
-            "response": "document"
+            "response": "raw"
         }'
 }
 
