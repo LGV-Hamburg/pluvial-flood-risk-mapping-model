@@ -91,16 +91,17 @@ class PfrSettings(BaseSettings):
         Must be non-empty before accepting URL-valued inputs; absence causes
         ``resolve_remote_inputs`` to raise a ``ValueError``.
 
-        Set ``FP_ALLOWED_INPUT_ORIGINS='["https://trusted.example.com/"]'``.
+        Set ``PFR_ALLOWED_INPUT_ORIGINS='["https://trusted.example.com/"]'``.
         """
-        v = self._fp_allowed_input_origins.strip()
+        v = self.pfr_allowed_input_origins.strip()
         if not v:
             return []
         try:
             parsed = json.loads(v)
             if not isinstance(parsed, list):
                 raise ValueError(
-                    "FP_ALLOWED_INPUT_ORIGINS must be a JSON array."
+                    "PFR_ALLOWED_INPUT_ORIGINS "
+                    "must be a JSON array or comma-separated string."
                 )
             return [str(o) for o in parsed]
         except json.JSONDecodeError:
