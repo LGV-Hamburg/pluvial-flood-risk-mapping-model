@@ -10,6 +10,9 @@ Set via environment before starting the worker::
     export PFR_DROP_INVALID_INPUT_FEATURES=true
 """
 
+import json
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,6 +52,57 @@ class PfrSettings(BaseSettings):
 
     Set ``PFR_DROP_INVALID_INPUT_FEATURES=true`` to enable lenient mode.
     """
+
+    dev_cache_dir: str | None = None
+    """Writable directory for the joblib fetch cache used in development.
+
+    When set, downloaded OGC API responses are cached to disk and reused on
+    subsequent runs.  The cache key includes all request parameters, so
+    changing any URL busts it automatically.
+
+    **Never set in production** — stale cached data will be served instead of
+    live data.
+
+    Set ``PFR_DEV_CACHE_DIR=data/intermediate`` to enable.
+    """
+
+    allowed_input_origins: list[str] = Field(
+        default=[],
+        validation_alias="FP_ALLOWED_INPUT_ORIGINS",
+    )
+    """Allowlist of trusted URL origins for user-supplied ``{href, type}``
+    reference inputs in ``PluvialFloodRiskProcess``.
+
+    Accepted formats: JSON array (``'["https://example.com"]'``) or
+    comma-separated string (``'https://a.com,https://b.com'``).
+
+    Must be set before accepting any URL-valued inputs; absence causes
+    ``resolve_remote_inputs`` to raise a ``ValueError``.
+
+    Set ``FP_ALLOWED_INPUT_ORIGINS='["https://trusted.example.com/"]'``.
+    """
+
+    @field_validator("allowed_input_origins", mode="before")
+    @classmethod
+    def _parse_allowed_origins(cls, v: object) -> list[str]:
+        if not v:
+            return []
+        if isinstance(v, list):
+            return [str(o) for o in v]
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            try:
+                parsed = json.loads(v)
+                if not isinstance(parsed, list):
+                    raise ValueError(
+                        "FP_ALLOWED_INPUT_ORIGINS must be a JSON array."
+                    )
+                return [str(o) for o in parsed]
+            except json.JSONDecodeError:
+                return [o.strip() for o in v.split(",") if o.strip()]
+        raise ValueError(f"Cannot parse FP_ALLOWED_INPUT_ORIGINS: {v!r}")
 
 
 settings = PfrSettings()

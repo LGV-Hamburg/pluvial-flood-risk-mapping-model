@@ -35,6 +35,7 @@ from fastprocesses.core.types import JobProgressCallback
 from fastprocesses.processes.process_registry import register_process
 from pydantic import BaseModel
 
+from ..algorithms.aggregations import create_thiessen_polygons
 from ..algorithms.classification import (
     ClassificationResult,
     run_classification_pipeline,
@@ -427,8 +428,6 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         # Voronoi (optional)
         voronoi_diagram_fc = None
         if want_voronoi and enriched_features:
-            from ..algorithms.aggregations import create_thiessen_polygons
-            from ..spatial_utils import project_crs_to_metric
             blds_gdf_wgs = convert_geojson_to_gdf(enriched_features, "EPSG:4326")
             blds_metric_v = project_crs_to_metric(blds_gdf_wgs, inp.target_crs)
             voronoi_diagram_fc = json.loads(

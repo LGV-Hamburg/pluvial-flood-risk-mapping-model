@@ -4,10 +4,12 @@ import asyncio
 import logging
 import os
 import tempfile
+from typing import cast
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import aiohttp
 import geopandas as gpd
+import joblib
 from fastprocesses.core.exceptions import SSRFBlockedError
 from tenacity import (
     RetryCallState,
@@ -16,6 +18,8 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential_jitter,
 )
+
+from ..settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -585,10 +589,7 @@ def fetch_references_cached(
     function arguments, so changing any URL busts it automatically.
     Never set this variable in production — it bypasses live data.
     """
-    import joblib
-    from typing import cast
-
-    cache_dir = os.environ.get("PFR_DEV_CACHE_DIR", "").strip() or None
+    cache_dir = settings.dev_cache_dir
     if cache_dir:
         logger.warning("DEV CACHE active — PFR_DEV_CACHE_DIR=%s", cache_dir)
     mem = joblib.Memory(cache_dir, verbose=0)

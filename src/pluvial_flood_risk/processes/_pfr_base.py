@@ -12,7 +12,6 @@ from __future__ import annotations
 import io
 import json
 import logging
-import os
 from collections import Counter
 from typing import ClassVar
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -161,9 +160,16 @@ class BasePfRProcess:
             self._inject_crs_params(inputs, references, inputs.get("target_crs"))
 
         ref_map = {key: inputs[key] for key in references}
+        allowed_origins = settings.allowed_input_origins
+        if not allowed_origins:
+            raise ValueError(
+                "FP_ALLOWED_INPUT_ORIGINS is not set. "
+                "Configure an allowlist of trusted origin prefixes "
+                "(JSON array or comma-separated) before accepting URL inputs."
+            )
         resolved = fetch_references_cached(
             ref_map,
-            allowed_origins=self._load_allowed_origins(),
+            allowed_origins=allowed_origins,
             page_limit=settings.ogc_page_limit,
             max_concurrent_requests=settings.max_parallel_requests,
         )
@@ -271,30 +277,6 @@ class BasePfRProcess:
             len(local_features), len(buildings["features"]),
         )
 
-    @staticmethod
-    def _load_allowed_origins() -> list[str]:
-        """Read FP_ALLOWED_INPUT_ORIGINS from the environment.
-
-        Raises
-        ------
-        ValueError
-            If the variable is missing or empty.
-        """
-        raw = os.environ.get("FP_ALLOWED_INPUT_ORIGINS", "").strip()
-        if not raw:
-            raise ValueError(
-                "FP_ALLOWED_INPUT_ORIGINS is not set. "
-                "Configure an allowlist of trusted origin prefixes "
-                "(JSON array or comma-separated) before accepting URL inputs."
-            )
-        try:
-            origins = json.loads(raw)
-            if not isinstance(origins, list):
-                raise ValueError("FP_ALLOWED_INPUT_ORIGINS must be a JSON array.")
-            return origins
-        except json.JSONDecodeError:
-            return [o.strip() for o in raw.split(",") if o.strip()]
-
     # ------------------------------------------------------------------
     # Validation hook
     # ------------------------------------------------------------------
@@ -349,11 +331,6 @@ class BasePfRProcess:
                 )
         logger.info("late_validate: all inputs valid")
         return True
-
-
-# ---------------------------------------------------------------------------
-# Shared output constants
-# ---------------------------------------------------------------------------
 
 _INPUT_BUILDING_OUTPUT_COLUMNS: list[str] = [
     FLOORS_ABOVE_GROUND,
