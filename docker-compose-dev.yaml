@@ -29,6 +29,9 @@ services:
       FP_JOB_STATUS_TTL_DAYS: 7
       FP_SYNC_EXECUTION_TIMEOUT_SECONDS: 10
       FP_LOG_LEVEL: "DEBUG"
+
+      PFR_PROCESS_DESCRIPTION_PFR_FILE: "/app/pfr.yaml"
+      PFR_PROCESS_DESCRIPTION_PFR_CITYWIDE_FILE: "/app/pfr-citywide.yaml"
     ports:
       - 8000:8000
     command: ['uvicorn', 'app:app', '--host', '0.0.0.0', '--port', '8000']
@@ -54,6 +57,9 @@ services:
       FP_JOB_STATUS_TTL_DAYS: 7
       FP_SYNC_EXECUTION_TIMEOUT_SECONDS: 10
       FP_LOG_LEVEL: "DEBUG"
+
+      PFR_PROCESS_DESCRIPTION_PFR_FILE: "/app/pfr.yaml"
+      PFR_PROCESS_DESCRIPTION_PFR_CITYWIDE_FILE: "/app/pfr-citywide.yaml"
     # ports:
     #   - ${WEBAPP_PORT_CONTAINER}:${WEBAPP_PORT}
     command: ['celery', '-A', 'fastprocesses.worker.FP_CELERY_app', 'worker', '--loglevel=debug']
