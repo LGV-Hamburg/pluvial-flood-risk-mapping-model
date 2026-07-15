@@ -44,7 +44,8 @@ RUN --mount=type=cache,target=$CACHE_DIR apt-get update && apt-get install -y --
 # add user and group
 RUN groupadd --gid $USER_GID $USERNAME && \
     useradd --create-home --no-log-init --gid $USER_GID --uid $USER_UID --shell /bin/bash $USERNAME && \
-    chown -R $USERNAME:$USERNAME /home/$USERNAME /usr/local/lib /usr/local/bin
+    chown -R $USERNAME:$USERNAME /home/$USERNAME /usr/local/lib /usr/local/bin \
+    && mkdir -p /app/logs && chown -R $USERNAME:$USERNAME /app/logs
 
 WORKDIR /app
 
