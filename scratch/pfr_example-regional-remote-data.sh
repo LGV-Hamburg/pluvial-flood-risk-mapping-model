@@ -4,8 +4,8 @@ set -euo pipefail
 
 DATA_DIR="/home/python-dev/code/python/flood-risk-mapping-model/data/hamburg"
 
-API_URL="${API_URL:-http://localhost:8000/processes/pluvial_flood_risk/execution}"
-# API_URL="${API_URL:-https://ump-prod.germanywestcentral.cloudapp.azure.com/processes/fair2adapt:pluvial_flood_risk/execution}"
+# API_URL="${API_URL:-http://localhost:8000/v1.0/processes/fair2adapt:pluvial-flood-risk-regional/execution}"
+API_URL="${API_URL:-https://ump-prod.germanywestcentral.cloudapp.azure.com/processes/fair2adapt:pluvial-flood-risk-regional/execution}"
 
 # OGC API Features items endpoints for the three remote inputs.
 # The /items suffix is required by the process (normative OGC API Features path).
@@ -13,10 +13,6 @@ API_URL="${API_URL:-http://localhost:8000/processes/pluvial_flood_risk/execution
 BUILDINGS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/buildings_footprint/collections/buildings/items?f=json&filter=floors_above_ground%20>%200"
 STREETS_URL="https://api.hamburg.de/datasets/v1/feinkartierung_strasse/collections/strassenflaechen/items?f=json&nutzung=Fahrbahn"
 FLOOD_LAYERS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/flood_levels/collections/sri7/items?f=json&"
-
-# SSRF allowlist consumed by PluvialFloodRiskProcess.resolve_remote_inputs().
-# Must cover every origin that appears in the three URLs above.
-export FP_ALLOWED_INPUT_ORIGINS='["https://geodata.germanywestcentral.cloudapp.azure.com/","https://api.hamburg.de/"]'
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required but not installed." >&2
@@ -47,8 +43,8 @@ generate_payload() {
                 target_crs: "http://www.opengis.net/def/crs/EPSG/0/25832",
                 vulnerability_parameters: {
                     sensitivity_weights: {
-                        children_under_10: 0.5,
-                        elderly_singles_over_65: 0.5
+                        children_under_10: 0.501,
+                        elderly_singles_over_65: 0.499
                     }
                 },
                 calculation_boundary: {
@@ -68,7 +64,7 @@ generate_payload() {
                         mediaType: "application/geo+json",
                         schema: "https://geojson.org/schema/FeatureCollection.json"
                     },
-                    transmissionMode: "value"
+                    transmissionMode: "reference"
                 },
                 classification_breaks_wb: {
                     transmissionMode: "value"
