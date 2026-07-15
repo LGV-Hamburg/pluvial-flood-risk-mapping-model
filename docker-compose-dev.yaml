@@ -5,6 +5,8 @@ networks:
 volumes:
   redis_data:
     driver: local
+  pfr_logs:
+
 
 services:
   api:
@@ -37,6 +39,10 @@ services:
     command: ['uvicorn', 'app:app', '--host', '0.0.0.0', '--port', '8000']
     networks:
       - dev
+    volumes:
+      - ./process-descriptions/pfr.yaml:/app/pfr.yaml:ro
+      - ./process-descriptions/pfr-citywide.yaml:/app/pfr-citywide.yaml:ro
+      - pfr_logs:/app/logs:rw
 
   worker:
     image: ${CONTAINER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
