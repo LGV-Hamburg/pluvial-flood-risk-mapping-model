@@ -177,5 +177,4 @@ secrets/*
 scratch/*
 !scratch/arcpy*
 !scratch/*.md
-!scratch/pfr_example-local-data.sh
-!scratch/pfr_example-remote-data.sh
+!scratch/pfr_example-*.sh
