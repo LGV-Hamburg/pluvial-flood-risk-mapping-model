@@ -613,8 +613,14 @@ class PluvialFloodRiskProcess(BasePfRProcess, BaseScatterProcess):
             )
             thiessen_gdf = create_thiessen_polygons(blds_metric)
             # Reproject back to the original source CRS for GeoJSON output
-            source_crs = source_buildings_gdf.crs or "EPSG:4326"
-            voronoi_diagram_fc = json.loads(thiessen_gdf.to_crs(source_crs).to_json())
+            # Reproject Voronoi back to the output CRS: target_crs when
+            # explicitly specified, otherwise the input buildings CRS.
+            source_crs = (
+                str(source_buildings_gdf.crs) if source_buildings_gdf.crs
+                else "EPSG:4326"
+            )
+            output_crs = input.target_crs or source_crs
+            voronoi_diagram_fc = json.loads(thiessen_gdf.to_crs(output_crs).to_json())
 
         # Classification breaks (only when requested)
         classification_breaks_wb = (
