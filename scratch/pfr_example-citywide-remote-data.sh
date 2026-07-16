@@ -10,9 +10,9 @@ API_URL="${API_URL:-https://ump-prod.germanywestcentral.cloudapp.azure.com/proce
 # OGC API Features items endpoints for the three remote inputs.
 # The /items suffix is required by the process (normative OGC API Features path).
 # streets: nutzung=Fahrbahn filters to road surfaces only; f=json requests GeoJSON.
-BUILDINGS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/buildings_footprint/collections/buildings/items?f=json&filter=floors_above_ground%20>%200&bbox=9.9763%2C53.5624%2C10.0010%2C53.5782"
-STREETS_URL="https://api.hamburg.de/datasets/v1/feinkartierung_strasse/collections/strassenflaechen/items?f=json&nutzung=Fahrbahn&bbox=9.9763%2C53.5624%2C10.0010%2C53.5782"
-FLOOD_LAYERS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/flood_levels/collections/sri7/items?f=json&bbox=9.9763%2C53.5624%2C10.0010%2C53.5782"
+BUILDINGS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/buildings_footprint/collections/buildings/items?f=json&filter=floors_above_ground%20>%200&bbox=9.9763%2C53.5624%2C10.0010%2C53.5786&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
+STREETS_URL="https://api.hamburg.de/datasets/v1/feinkartierung_strasse/collections/strassenflaechen/items?f=json&nutzung=Fahrbahn&bbox=9.9763%2C53.5624%2C10.0010%2C53.5786&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
+FLOOD_LAYERS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/flood_levels/collections/sri7/items?f=json&bbox=9.9763%2C53.5624%2C10.0010%2C53.5786&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required but not installed." >&2
@@ -41,10 +41,28 @@ generate_payload() {
                 },
                 statistical_units: $statistical_units[0],
                 target_crs: "http://www.opengis.net/def/crs/EPSG/0/25832",
+                hazard_parameters: {
+                    buffer_building_m: 2,
+                    buffer_zone1_m: 5,
+                    buffer_zone2_m: 15,
+                    buffer_zone3_m: 30,
+                    lognormal_shape: 0.25,
+                    ma_flood_level_cm: 30,
+                    min_street_flood_area_m2: 4
+                },
+                output_settings: {
+                    decimal_precision: 3,
+                    include_input_building_properties: true
+                },
+                risk_weights: {
+                    exposure_exponent: 1,
+                    hazard_exponent: 1,
+                    vulnerability_exponent: 1
+                },
                 vulnerability_parameters: {
                     sensitivity_weights: {
-                        children_under_10: 0.501,
-                        elderly_singles_over_65: 0.499
+                        children_under_10: 0.5,
+                        elderly_singles_over_65: 0.5
                     }
                 },
             },
