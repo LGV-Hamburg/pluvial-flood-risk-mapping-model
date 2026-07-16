@@ -285,13 +285,13 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
             halo_streets = streets_metric[streets_metric.intersects(halo)]
             halo_flood = flood_metric[flood_metric.intersects(halo)]
 
-            # Reset index so 'id' becomes a feature property (not GeoJSON feature id)
-            unit_blds_reset = unit_blds.reset_index(names="id")
-
+            # Serialise with the building-ID index kept as the GeoJSON feature id
+            # field so execute_single can reconstruct the ID unambiguously via
+            # convert_geojson_to_gdf's canonical-ID logic (f.get("id")).
             items.append({
                 **shared_params,
                 "unit_id": str(unit_id),
-                "buildings": json.loads(unit_blds_reset.to_json()),
+                "buildings": json.loads(unit_blds.to_json()),
                 "streets": json.loads(halo_streets.to_json()),
                 "flood_layers": json.loads(halo_flood.to_json()),
             })
@@ -403,8 +403,6 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         # otherwise the original input CRS — typically EPSG:4326 for GeoJSON)
         output_crs = item.get("output_crs", "EPSG:4326")
         blds_out = blds_gdf.to_crs(output_crs)
-        # Keep the building-ID index so that the GeoJSON feature `id` field
-        # matches the IDs in classified.data — required by build_enriched_features.
 
         risk_wb = [
             float(v) if pd.notna(v) else None
