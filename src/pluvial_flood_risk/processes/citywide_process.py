@@ -206,6 +206,12 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
 
         # 1. Build city-wide buildings GDF (metric CRS)
         blds_gdf = convert_geojson_to_gdf(inp.buildings["features"], inp.target_crs)
+        # Capture the source CRS before projection so we can restore it on output.
+        # For standard WGS-84 GeoJSON this is EPSG:4326; for pre-projected data it
+        # matches target_crs.  When target_crs is set the user intends both
+        # calculations *and* geographic outputs in that CRS.
+        source_crs = blds_gdf.crs.to_string() if blds_gdf.crs else "EPSG:4326"
+        output_crs = inp.target_crs or source_crs
         blds_metric = project_crs_to_metric(blds_gdf, inp.target_crs)
         blds_metric[BUILDING_FOOTPRINT_AREA_M2] = blds_metric.geometry.area
 
@@ -268,6 +274,7 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         # 7. Partition by statistical unit and build work items
         shared_params = {
             "target_crs": inp.target_crs,
+            "output_crs": output_crs,
             "hazard_parameters": inp.hazard_parameters.model_dump(),
             "risk_weights": inp.risk_weights.model_dump(),
             "output_settings": inp.output_settings.model_dump(),
@@ -394,8 +401,10 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
             unit_id, time.perf_counter() - _t0,
         )
 
-        # Reproject to WGS-84 for output
-        blds_out = blds_gdf.to_crs("EPSG:4326").reset_index(names="id")
+        # Reproject to the requested output CRS (target_crs when specified,
+        # otherwise the original input CRS — typically EPSG:4326 for GeoJSON)
+        output_crs = item.get("output_crs", "EPSG:4326")
+        blds_out = blds_gdf.to_crs(output_crs).reset_index(names="id")
 
         risk_wb = [
             float(v) if pd.notna(v) else None
@@ -499,10 +508,11 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         # Voronoi (optional)
         voronoi_diagram_fc = None
         if want_voronoi and enriched_features:
-            blds_gdf_wgs = convert_geojson_to_gdf(enriched_features, "EPSG:4326")
-            blds_metric_v = project_crs_to_metric(blds_gdf_wgs, inp.target_crs)
+            output_crs = inp.target_crs or "EPSG:4326"
+            blds_gdf_out = convert_geojson_to_gdf(enriched_features, output_crs)
+            blds_metric_v = project_crs_to_metric(blds_gdf_out, inp.target_crs)
             voronoi_diagram_fc = json.loads(
-                create_thiessen_polygons(blds_metric_v).to_crs("EPSG:4326").to_json()
+                create_thiessen_polygons(blds_metric_v).to_crs(output_crs).to_json()
             )
 
         # Classification breaks
