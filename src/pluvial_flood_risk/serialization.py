@@ -94,8 +94,16 @@ def build_enriched_features(
             properties = {}
         row = classified.data.loc[building_id]
         for column in output_columns:
+            # When a column is absent from classified.data (e.g. citywide process
+            # where execute_single pre-computes most columns and merge_results only
+            # adds classification labels), fall back to the feature's own properties.
+            value = (
+                row[column]
+                if column in classified.data.columns
+                else source_properties.get(column)
+            )
             properties[column] = serialize_output_value(
-                row[column], input.output_settings.decimal_precision
+                value, input.output_settings.decimal_precision
             )
         enriched_features.append({**feature, "properties": properties})
 

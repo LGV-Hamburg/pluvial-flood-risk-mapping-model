@@ -57,12 +57,10 @@ from ..models.field_names import (
     PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY,
     PLUVIAL_FLOOD_RISK_WELL_BEING,
     RESIDENTS_IN_STATISTICAL_UNIT,
-    RISK_CLASS_MOBILITY_ACCESSIBILITY,
-    RISK_CLASS_WELL_BEING,
     STATISTICAL_UNIT_ID,
 )
 from ..models.inputs import HazardParams, ProcessInputs, RiskWeights
-from ..serialization import serialize_output_value
+from ..serialization import build_enriched_features, serialize_output_value
 from ..spatial_utils import (
     convert_geojson_to_gdf,
     filter_gdf_to_boundary,
@@ -404,7 +402,9 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         # Reproject to the requested output CRS (target_crs when specified,
         # otherwise the original input CRS — typically EPSG:4326 for GeoJSON)
         output_crs = item.get("output_crs", "EPSG:4326")
-        blds_out = blds_gdf.to_crs(output_crs).reset_index(names="id")
+        blds_out = blds_gdf.to_crs(output_crs)
+        # Keep the building-ID index so that the GeoJSON feature `id` field
+        # matches the IDs in classified.data — required by build_enriched_features.
 
         risk_wb = [
             float(v) if pd.notna(v) else None
@@ -453,71 +453,61 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
 
         logger.info("merge_results: %d buildings across all units", len(all_features))
 
-        # Build risk Series for global classification
-        wb_series = pd.Series(all_risk_wb, dtype="float64")
-        ma_series = pd.Series(all_risk_ma, dtype="float64")
-
-        # Combine into a DataFrame so run_classification_pipeline can work on it
-        risk_df = pd.DataFrame({
-            PLUVIAL_FLOOD_RISK_WELL_BEING: wb_series,
-            PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY: ma_series,
-        })
+        # Build risk DataFrame indexed by building ID so that classification
+        # labels can be looked up by ID in build_enriched_features (avoids
+        # positional-index fragility when chunks arrive out of order).
+        building_ids = [str(f.get("id")) for f in all_features]
+        risk_df = pd.DataFrame(
+            {
+                PLUVIAL_FLOOD_RISK_WELL_BEING: all_risk_wb,
+                PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY: all_risk_ma,
+            },
+            index=building_ids,
+            dtype="float64",
+        )
         classified: ClassificationResult = run_classification_pipeline(
             risk_df, inp.n_classification_iterations
         )
 
-        # Build feature ID → class-label mapping
-        wb_classes = classified.data[RISK_CLASS_WELL_BEING]
-        ma_classes = classified.data[RISK_CLASS_MOBILITY_ACCESSIBILITY]
-
-        # Attach class labels and serialise output properties
         want_risk_buildings = requested is None or "risk_buildings" in requested
         want_voronoi = requested is None or "voronoi_diagram" in requested
 
-        decimal_prec = inp.output_settings.decimal_precision
-        include_input_props = inp.output_settings.include_input_building_properties
-
         enriched_features: list[dict] = []
-        for idx, feature in enumerate(all_features):
-            props = {}
-            if include_input_props:
-                src = feature.get("properties", {})
-                props = {
-                    col: src[col]
-                    for col in _INPUT_BUILDING_OUTPUT_COLUMNS
-                    if col in src
-                }
-            src_props = feature.get("properties", {})
-            for col in _OUTPUT_COLUMNS:
-                if col in src_props:
-                    props[col] = serialize_output_value(src_props[col], decimal_prec)
-            # Attach global class labels
-            props[RISK_CLASS_WELL_BEING] = (
-                int(wb_classes.iloc[idx]) if pd.notna(wb_classes.iloc[idx]) else None
+        source_buildings_gdf = None
+        if want_risk_buildings or want_voronoi:
+            enriched_features, source_buildings_gdf = build_enriched_features(
+                all_features, classified, inp,
+                list(_OUTPUT_COLUMNS),
+                list(_OUTPUT_COLUMNS),
+                _INPUT_BUILDING_OUTPUT_COLUMNS,
             )
-            props[RISK_CLASS_MOBILITY_ACCESSIBILITY] = (
-                int(ma_classes.iloc[idx]) if pd.notna(ma_classes.iloc[idx]) else None
-            )
-            enriched_features.append({**feature, "properties": props})
 
         risk_buildings = (
             {"type": "FeatureCollection", "features": enriched_features}
             if want_risk_buildings else None
         )
 
-        # Voronoi (optional)
+        # Voronoi (optional) — same pattern as PluvialFloodRiskProcess
         voronoi_diagram_fc = None
-        if want_voronoi and enriched_features:
-            output_crs = inp.target_crs or "EPSG:4326"
-            blds_gdf_out = convert_geojson_to_gdf(enriched_features, output_crs)
-            blds_metric_v = project_crs_to_metric(blds_gdf_out, inp.target_crs)
+        if want_voronoi and source_buildings_gdf is not None:
+            output_crs = (
+                inp.target_crs
+                or str(source_buildings_gdf.crs)
+                or "EPSG:4326"
+            )
+            blds_metric_v = project_crs_to_metric(
+                source_buildings_gdf, inp.target_crs
+            )
             voronoi_diagram_fc = json.loads(
-                create_thiessen_polygons(blds_metric_v).to_crs(output_crs).to_json()
+                create_thiessen_polygons(blds_metric_v)
+                .to_crs(output_crs)
+                .to_json()
             )
 
         # Classification breaks
         want_wb = requested is None or "classification_breaks_wb" in requested
         want_ma = requested is None or "classification_breaks_ma" in requested
+        decimal_prec = inp.output_settings.decimal_precision
         classification_breaks_wb = (
             [cast(float, serialize_output_value(v, decimal_prec)) for v in classified.breaks_well_being]
             if want_wb else None
