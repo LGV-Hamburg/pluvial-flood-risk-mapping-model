@@ -85,6 +85,18 @@ class PfrSettings(BaseSettings):
     Set ``PFR_DEV_CACHE_DIR=data/intermediate`` to enable.
     """
 
+    reference_href: str | None = None
+    """Fixed href returned for all ``transmissionMode: reference`` outputs.
+
+    When set, the API advertises support for output-by-reference and returns
+    this URL as the ``href`` in the qualified-value response.  The actual
+    result bytes are **discarded** — this is a stub for development and testing
+    until a proper file-serving backend (object storage, static-files route)
+    is wired up.
+
+    Set ``PFR_REFERENCE_HREF=https​://example.com/results`` to enable.
+    """
+
     pfr_allowed_input_origins: str = Field(
         default="",
         alias="PFR_ALLOWED_INPUT_ORIGINS",
