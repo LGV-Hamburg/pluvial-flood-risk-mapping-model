@@ -27,6 +27,8 @@ services:
       FP_CELERY_TASK_TLIMIT_HARD: 1800 # 30 minutes
       FP_CELERY_TASK_TLIMIT_SOFT: 1500 # 25 minutes
       FP_RESULTS_TEMP_TTL_HOURS: 24
+      FP_CELERY_JOB_MODE: "False"
+      FP_CELERY_QUEUE: "floodrisk-c"
 
       FP_JOB_STATUS_TTL_DAYS: 7
       FP_SYNC_EXECUTION_TIMEOUT_SECONDS: 10
@@ -59,7 +61,8 @@ services:
       FP_CELERY_TASK_TLIMIT_HARD: 1800 # 30 minutes
       FP_CELERY_TASK_TLIMIT_SOFT: 1500 # 25 minutes
       FP_RESULTS_TEMP_TTL_HOURS: 24
-
+      FP_CELERY_JOB_MODE: "False"
+      FP_CELERY_QUEUE: "floodrisk-c"
       FP_JOB_STATUS_TTL_DAYS: 7
       FP_SYNC_EXECUTION_TIMEOUT_SECONDS: 10
       FP_LOG_LEVEL: "DEBUG"
@@ -68,7 +71,7 @@ services:
       PFR_PROCESS_DESCRIPTION_PFR_CITYWIDE_FILE: "/app/pfr-citywide.yaml"
     # ports:
     #   - ${WEBAPP_PORT_CONTAINER}:${WEBAPP_PORT}
-    command: ['celery', '-A', 'fastprocesses.worker.FP_CELERY_app', 'worker', '--loglevel=debug']
+    command: ['celery', '-A', 'fastprocesses.worker.celery_app', 'worker', '--loglevel=debug']
     networks:
       - dev
 
