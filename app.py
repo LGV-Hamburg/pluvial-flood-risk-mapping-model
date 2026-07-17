@@ -19,6 +19,7 @@ import pluvial_flood_risk.processes.citywide_process  # noqa: F401
 # Import the process module so that @register_process fires and
 # PluvialFloodRiskProcess appears in the OGC process registry.
 import pluvial_flood_risk.processes.flood_risk_process  # noqa: F401
+from pluvial_flood_risk.settings import settings as pfr_settings
 
 # Fail loudly at startup if the expected process was not registered.
 # This catches accidental removal of the import above before any request is served.
@@ -30,13 +31,27 @@ _missing = _REQUIRED_PROCESSES - _registered
 logger = logging.getLogger("pluvial-flood-risk")
 
 
+class _FixedUrlReferencePublisher:
+    """Stub output-reference publisher that always returns a fixed href.
+
+    Discards the result payload and returns ``PFR_REFERENCE_HREF`` verbatim.
+    Intended as a development stand-in until a proper file-serving backend
+    (object storage, static-files route) is available.
+    """
+
+    def __init__(self, href: str) -> None:
+        self._href = href
+
+    def publish(self, payload: bytes, *, output_id: str, media_type: str) -> str:  # noqa: ARG002
+        return self._href
+
 if _missing:
     raise RuntimeError(
         f"Expected OGC processes not registered at startup: {_missing}. "
         "Ensure all process modules are imported before OGCProcessesAPI is created."
     )
 
-app = OGCProcessesAPI(
+api = OGCProcessesAPI(
     contact={
         "name": "Agency for Geoinformation and Surveying Hamburg",
         "url": (
@@ -51,7 +66,18 @@ app = OGCProcessesAPI(
         "url": "https://github.com/LGV-Hamburg/noiseprocesses/blob/main/LICENSE",
     },
     terms_of_service="",
-).get_app()
+)
+
+if pfr_settings.reference_href:
+    api.process_manager.output_reference_publisher = _FixedUrlReferencePublisher(
+        pfr_settings.reference_href
+    )
+    logger.info(
+        "Output-reference publisher configured (stub): href=%s",
+        pfr_settings.reference_href,
+    )
+
+app = api.get_app()
 
 if __name__ == "__main__":
     uvicorn.run(
