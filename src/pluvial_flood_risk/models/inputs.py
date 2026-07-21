@@ -7,9 +7,10 @@ the paper.
 
 from __future__ import annotations
 
+from geojson_pydantic import Feature, FeatureCollection
+from geojson_pydantic.geometries import GeometryCollection, MultiPolygon, Polygon
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pyproj import CRS
-from pydantic import BaseModel, Field, model_validator
-from pydantic import field_validator
 
 # ---------------------------------------------------------------------------
 # Vulnerability (Steps 1.1-1.4)
@@ -21,14 +22,31 @@ class SensitivityWeights(BaseModel):
 
     Defaults from Vogelbacher et al. (2025), Table / line 155:
         ES (elderly singles) = 0.7, C (children) = 0.3.
+
+    Optionally include single_parents (SP).  When SP weight > 0 the user
+    must adjust the other weights so all three sum to 1.0.
     """
 
     children_under_10: float = Field(default=0.3, ge=0.0, le=1.0)
     elderly_singles_over_65: float = Field(default=0.7, ge=0.0, le=1.0)
+    single_parents: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Weight for single-parent households in sensitivity TOPSIS. "
+            "Default 0.0 excludes this indicator (paper baseline). "
+            "Set > 0 and adjust other weights to include it."
+        ),
+    )
 
     @model_validator(mode="after")
     def weights_sum_to_one(self) -> SensitivityWeights:
-        total = self.children_under_10 + self.elderly_singles_over_65
+        total = (
+            self.children_under_10
+            + self.elderly_singles_over_65
+            + self.single_parents
+        )
         if abs(total - 1.0) > 1e-9:
             raise ValueError(f"SensitivityWeights must sum to 1.0, got {total:.6f}")
         return self
@@ -115,22 +133,31 @@ class HazardParams(BaseModel):
     buffer_building_m: float = Field(
         default=2.0,
         gt=0.0,
-        description="Buffer radius [m] around building footprint for the well-being hazard (Step 4.1).",
+        description=(
+            "Buffer radius [m] around building footprint "
+            "for the well-being hazard (Step 4.1)."
+        ),
     )
     buffer_zone1_m: float = Field(
         default=5.0,
         gt=0.0,
-        description="Inner buffer radius [m] around building for mobility hazard (Step 3.1).",
+        description=(
+            "Inner buffer radius [m] around building for mobility hazard (Step 3.1)."
+        ),
     )
     buffer_zone2_m: float = Field(
         default=15.0,
         gt=0.0,
-        description="Street buffer radius [m] for the near-access zone (Step 3.1).",
+        description=(
+            "Street buffer radius [m] for the near-access zone (Step 3.1)."
+        ),
     )
     buffer_zone3_m: float = Field(
         default=30.0,
         gt=0.0,
-        description="Street buffer outer radius [m] for the extended-access zone (Step 3.1).",
+        description=(
+            "Street buffer outer radius [m] for the extended-access zone (Step 3.1)."
+        ),
     )
     min_street_flood_area_m2: float = Field(
         default=4.0,
@@ -167,11 +194,11 @@ class HazardParams(BaseModel):
 
 
 class RiskWeights(BaseModel):
-    """Exponent weights for the IPCC risk product formula (Step 5, Eq. 14/15).
+    """Exponent weights for the IPCC risk product formula (Step 5, Eq. 14 and 15).
 
-    PFR = SV_PF^a * E^b * H^c
+    PFR = SV_PF^a * E^b * H^c (this is the general formula for both PFR_WB and PFR_MA).
 
-    All default to 1.0 (unweighted product) as in the paper.
+    All default to 1.0 (unweighted product) as in Vogelbacher et al. (2025).
     """
 
     vulnerability_exponent: float = Field(
@@ -194,7 +221,7 @@ class OutputParams(BaseModel):
     """Controls for the serialized GeoJSON output payload."""
 
     include_input_building_properties: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Include selected original building input properties in the output "
             "feature properties in addition to computed pipeline outputs."
@@ -208,6 +235,43 @@ class OutputParams(BaseModel):
             "values. Set to null to disable rounding."
         ),
     )
+    # (HEALPix parameters moved to a dedicated `HealpixParams` model)
+
+
+class HealpixParams(BaseModel):
+    """Parameters controlling HEALPix aggregation of building-level results."""
+
+    depth: int = Field(
+        default=15,
+        ge=1,
+        le=29,
+        description=(
+            "HEALPix depth (nside = 2^depth). Higher values produce finer cells."
+        ),
+    )
+    agg_func: str = Field(
+        default="mean",
+        description=(
+            "Aggregation function applied to risk columns "
+            "('mean','max','sum','median')."
+        ),
+    )
+    min_buildings: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Minimum number of buildings per HEALPix "
+            "cell required for inclusion."
+        ),
+    )
+    columns: list[str] | None = Field(
+        default=None,
+        description=(
+            "Explicit list of columns to aggregate. Omit "
+            "(None) to auto-detect available risk/hazard columns."
+        ),
+    )
+
 
 
 # ---------------------------------------------------------------------------
@@ -226,10 +290,13 @@ class PipelineParams(BaseModel):
     >>> params = PipelineParams(vulnerability=VulnerabilityParams(apply_entropy=False))
     """
 
-    vulnerability: VulnerabilityParams = Field(default_factory=VulnerabilityParams)
-    hazard: HazardParams = Field(default_factory=HazardParams)
+    vulnerability_parameters: VulnerabilityParams = Field(
+        default_factory=VulnerabilityParams
+    )
+    hazard_parameters: HazardParams = Field(default_factory=HazardParams)
     risk_weights: RiskWeights = Field(default_factory=RiskWeights)
-    output: OutputParams = Field(default_factory=OutputParams)
+    output_settings: OutputParams = Field(default_factory=OutputParams)
+    healpix_params: HealpixParams = Field(default_factory=HealpixParams)
     n_classification_iterations: int = Field(
         default=4,
         ge=1,
@@ -265,5 +332,230 @@ class PipelineParams(BaseModel):
         try:
             CRS.from_user_input(value)
         except Exception as exc:
-            raise ValueError(f"Invalid target_crs identifier: {value!r}") from exc
+            raise ValueError(
+                f"Invalid target_crs identifier: {value!r}"
+            ) from exc
         return value
+
+
+# ---------------------------------------------------------------------------
+# Geodata property models (for structured validation)
+# ---------------------------------------------------------------------------
+
+
+class BuildingProperties(BaseModel):
+    """Building feature properties schema.
+
+    Core required attributes for pluvial flood risk scoring. Additional
+    properties are silently ignored to support multipurpose data.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: int | str = Field(
+        description="Unique building identifier (numerical or string)."
+    )
+    floors_above_ground: int = Field(
+        ge=0,
+        description="Number of floors above ground (0 = ground floor only).",
+    )
+    building_type: int | None = Field(
+        ge=0,
+        description=(
+            "Building type (1 = fully residential, 2 = non-residential ground floor, "
+            "0 = other)."
+        ),
+    )
+
+
+class StreetProperties(BaseModel):
+    """Street feature properties schema.
+
+    Core attributes for mobility/accessibility hazard calculations.
+    Additional properties are silently ignored.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+
+
+class FloodLayerProperties(BaseModel):
+    """Flood layer (depth grid) feature properties schema.
+
+    Represents flood scenarios at specific depth thresholds.
+    Additional properties are silently ignored.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    level_cm: int = Field(
+        ge=0,
+        description="Flood water depth in centimeters (e.g., 30, 50, 100).",
+    )
+
+
+class StatisticalUnitProperties(BaseModel):
+    """Statistical unit (census area) feature properties schema.
+
+    Used to allocate residents and compute exposure. Additional properties
+    are silently ignored.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    statistical_unit_id: int | str = Field(
+        description="Unique statistical unit identifier (numerical or string)."
+    )
+    residents_in_statistical_unit: int = Field(
+        ge=0,
+        description="Total resident population in this unit.",
+    )
+    single_parents: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Total number of single-parent households in this unit.",
+    )
+    no_highschool_diploma: float = Field(
+        ge=0.0,
+        description=(
+            "Total number of residents without a high-school diploma in the last 3 years "
+            "(indicator EDQ for education-based coping capacity)."
+        ),
+    )
+    social_welfare_recipients: float = Field(
+        ge=0.0,
+        description=(
+            "Total number of social welfare recipients in this unit "
+            "(indicator WR for welfare-based coping capacity)."
+        ),
+    )
+    elderly_singles_over_65: float = Field(
+        ge=0.0,
+        description=(
+            "Total number of elderly singles over 65 years old in this unit "
+            "(indicator ES for elderly singles sensitivity)."
+        ),
+    )
+    children_under_10: float = Field(
+        ge=0.0,
+        description=(
+            "Total number of children under 10 years old in this unit "
+            "(indicator C for children sensitivity)."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Typed GeoJSON FeatureCollection aliases (used in late_validate)
+# ---------------------------------------------------------------------------
+
+BuildingsFeatureCollection = FeatureCollection[
+    Feature[Polygon | MultiPolygon, BuildingProperties]
+]
+StreetsFeatureCollection = FeatureCollection[
+    Feature[Polygon | MultiPolygon, StreetProperties]
+]
+FloodLayersFeatureCollection = FeatureCollection[
+    Feature[Polygon | MultiPolygon, FloodLayerProperties]
+]
+StatisticalUnitsFeatureCollection = FeatureCollection[
+    Feature[Polygon | MultiPolygon, StatisticalUnitProperties]
+]
+
+
+# ---------------------------------------------------------------------------
+# Process-level input wrapper
+# ---------------------------------------------------------------------------
+
+
+class ProcessInputs(PipelineParams):
+    """Typed wrapper for the OGC exec_body inputs dict.
+
+    Extends ``PipelineParams`` with four GeoJSON FeatureCollection inputs and an
+    optional calculation boundary. All pipeline parameters and spatial layers live
+    at the same level. FeatureCollections are kept as raw dicts here; structural
+    validation via the typed aliases (BuildingsFeatureCollection, etc.) is deferred
+    to the ``late_validate`` hook on the process class.
+
+    Validation Pipeline (fastprocesses 3-hook design)
+    ================================================
+
+    ProcessInputs participates in three sequential validation phases:
+
+    1. **validate_inputs()** (wire-format; before ProcessInputs construction)
+       - Called on raw exec_body['inputs'] before Pydantic parsing
+       - For PluvialFloodRiskProcess: checks reference objects ({href, type})
+         are well-formed; verifies 'href' is a valid URI; 'type' is in enum
+       - Runs SSRF check when allowed_origins is configured
+       - Fails fast if wire format is invalid (user-submitted URLs rejected here)
+       - Does NOT download or validate data
+       - Subclass: override BaseScatterProcess.validate_inputs()
+
+    2. **resolve_remote_inputs()** (downloads and replaces URLs with data)
+       - Called by fastprocesses after validate_inputs() succeeds
+       - For PluvialFloodRiskProcess: downloads GeoJSON/FlatGeobuf from
+         user-supplied {href, type} reference and decodes to GeoJSON dict
+         (via fetch_ogc_features + decode_flatgeobuf_bytes)
+       - For PluvialFloodRiskHamburg: fetches from server-side URLs when
+         user-provided inputs are absent
+       - Returns new exec_body['inputs'] with URLs replaced by decoded data
+       - Runs SSRF check again on every hop (defense in depth)
+       - Subclass: override resolve_remote_inputs()
+
+    3. **late_validate(inputs)** (structure validation after resolution)
+       - Called by fastprocesses on the *process* class, not ProcessInputs
+       - Validates resolved FeatureCollections via typed aliases (geojson-pydantic)
+       - Override late_validate() on PluvialFloodRiskProcess / PluvialFloodRiskHamburg
+
+    See fastprocesses documentation (BaseScatterProcess / BaseParallelProcess)
+    for full integration details.
+    """
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    buildings: dict = Field(
+        description="GeoJSON FeatureCollection of building footprints."
+    )
+    buildings_local: dict | None = Field(
+        default=None,
+        description=(
+            "Optional pre-filtered subset of 'buildings' covering only the "
+            "statistical units intersecting calculation_boundary. Populated by "
+            "resolve_remote_inputs so local steps (exposure, hazard) avoid the "
+            "full-city building set. Global steps use 'buildings'."
+        ),
+    )
+    streets: dict = Field(
+        description="GeoJSON FeatureCollection of street/road segments."
+    )
+    flood_layers: dict = Field(
+        description="GeoJSON FeatureCollection of flood depth polygons/grids."
+    )
+    statistical_units: dict | None = Field(
+        default=None,
+        description="Optional GeoJSON FeatureCollection of statistical units (census areas).",
+    )
+    calculation_boundary: dict | None = Field(
+        default=None,
+        description=(
+            "Optional GeoJSON Polygon or MultiPolygon to restrict the geographic "
+            "region for scoring and output. Global steps (TOPSIS vulnerability, "
+            "classification) still run on the full building dataset; only the "
+            "final output features are filtered to this boundary. If null, the "
+            "entire study area is processed and returned."
+        ),
+    )
+
+    @classmethod
+    def from_exec_body(cls, exec_body: dict) -> "ProcessInputs":
+        """Parse exec_body['inputs'] into a typed ProcessInputs instance.
+
+        All pipeline parameter keys (``vulnerability``, ``hazard``,
+        ``risk_weights``, ``output``, ``n_classification_iterations``,
+        ``target_crs``) are top-level inputs alongside the spatial layers.
+        Any key absent from the user payload falls back to the field default.
+        The calculation_boundary field is optional and may be None.
+
+        """
+        raw: dict = exec_body["inputs"]
+        return cls.model_validate(raw)

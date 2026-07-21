@@ -24,6 +24,8 @@ RUN touch README.md \
 
 FROM python:3.13-slim-bookworm as runtime
 
+ENV CACHE_DIR=/app/cache
+
 ARG USER_UID=1000
 ARG USERNAME=pythonuser
 ARG USER_GID=2000
@@ -31,12 +33,19 @@ ARG SOURCE_COMMIT
 
 LABEL maintainer="Stefan Schuhart" \
       name="analytics/pluvial-flood-risk" \
-      source_commit=$SOURCE_COMMIT
+      source_commit=$SOURCE_COMMIT \
+      org.opencontainers.image.version=0.10.0
+
+RUN --mount=type=cache,target=$CACHE_DIR apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates  \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # add user and group
 RUN groupadd --gid $USER_GID $USERNAME && \
     useradd --create-home --no-log-init --gid $USER_GID --uid $USER_UID --shell /bin/bash $USERNAME && \
-    chown -R $USERNAME:$USERNAME /home/$USERNAME /usr/local/lib /usr/local/bin
+    chown -R $USERNAME:$USERNAME /home/$USERNAME /usr/local/lib /usr/local/bin \
+    && mkdir -p /app/logs && chown -R $USERNAME:$USERNAME /app/logs
 
 WORKDIR /app
 
@@ -48,6 +57,10 @@ COPY --from=base \
     --chown=$USERNAME:$USERNAME \
     ${VIRTUAL_ENV} ./.venv
 
-COPY --chown=$USERNAME:$USER_GID app.py ./
+COPY --chown=$USERNAME:$USER_GID app.py process-descriptions/* ./
+
+COPY --chown=$USERNAME:$USER_GID schemas /app/schemas
+
+USER $USERNAME
 
 ENV PYTHONUNBUFFERED 1

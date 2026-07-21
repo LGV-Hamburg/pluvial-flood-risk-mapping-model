@@ -40,6 +40,9 @@ CHILDREN_UNDER_10: str = "children_under_10"
 ELDERLY_SINGLES_OVER_65: str = "elderly_singles_over_65"
 """Number of elderly singles over 65 years (sensitivity indicator ES)."""
 
+SINGLE_PARENTS: str = "single_parents"
+"""Number of single-parent households (optional sensitivity indicator SP)."""
+
 SOCIAL_WELFARE_RECIPIENTS: str = "social_welfare_recipients"
 """Number of social welfare recipients (coping capacity indicator WR)."""
 

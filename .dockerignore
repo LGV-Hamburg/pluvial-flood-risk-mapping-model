@@ -9,3 +9,5 @@
 !pyproject.toml
 !src
 !app.py
+!schemas/
+!process-descriptions/

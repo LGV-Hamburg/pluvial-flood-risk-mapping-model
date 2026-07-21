@@ -16,10 +16,13 @@ area as ``building_footprint_area_m2``.  When the input arrives as a GeoJSON
 FeatureCollection the process layer derives this column from the polygon
 geometry (``gdf.geometry.area``) before invoking this module.
 
-The statistical-unit lookup (residents, living area) is assumed to be
-pre-joined onto each building row — matching how the OGC process input
-FeatureCollection embeds ``residents_in_statistical_unit`` and
-``living_area_m2_statistical_unit`` as building properties.
+The process layer ensures two statistical-unit columns are available before
+this module runs:
+
+* ``residents_in_statistical_unit`` — provided directly or joined from the
+    statistical-units dataset
+* ``living_area_m2_statistical_unit`` — derived from building geometry,
+    floors, and building type within each statistical unit
 
 Formulas (original ArcPy field expressions)
 --------------------------------------------
@@ -30,6 +33,9 @@ EMA        = R   (all residents per building; mobility risk affects every floor)
 """
 
 from __future__ import annotations
+
+import logging
+import time
 
 import numpy as np
 import pandas as pd
@@ -45,6 +51,8 @@ from ..models.field_names import (
     RESIDENTS_IN_STATISTICAL_UNIT,
     RESIDENTS_PER_BUILDING,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Step 2a — Net usable building area
@@ -215,6 +223,8 @@ def run_exposure_pipeline(df: pd.DataFrame) -> pd.DataFrame:
         * ``exposure_mobility_accessibility``
     """
     out = df.copy()
+    logger.info("Exposure pipeline start: %d buildings", len(out))
+    _t0 = time.perf_counter()
 
     # Step 2a — Net usable floor area
     out[BUILDING_LIVING_AREA_M2] = compute_building_living_area(out)
@@ -228,4 +238,5 @@ def run_exposure_pipeline(df: pd.DataFrame) -> pd.DataFrame:
     # Step 2d — Mobility exposure index / EMA  (Eq. 10)
     out[EXPOSURE_MOBILITY_ACCESSIBILITY] = compute_exposure_mobility_accessibility(out)
 
+    logger.info("Exposure pipeline complete: %.2fs", time.perf_counter() - _t0)
     return out

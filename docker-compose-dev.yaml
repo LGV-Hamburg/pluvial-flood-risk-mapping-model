@@ -5,6 +5,8 @@ networks:
 volumes:
   redis_data:
     driver: local
+  pfr_logs:
+
 
 services:
   api:
@@ -25,15 +27,24 @@ services:
       FP_CELERY_TASK_TLIMIT_HARD: 1800 # 30 minutes
       FP_CELERY_TASK_TLIMIT_SOFT: 1500 # 25 minutes
       FP_RESULTS_TEMP_TTL_HOURS: 24
+      FP_CELERY_JOB_MODE: "False"
+      FP_CELERY_QUEUE: "floodrisk-c"
 
       FP_JOB_STATUS_TTL_DAYS: 7
       FP_SYNC_EXECUTION_TIMEOUT_SECONDS: 10
       FP_LOG_LEVEL: "DEBUG"
+
+      PFR_PROCESS_DESCRIPTION_PFR_FILE: "/app/pfr.yaml"
+      PFR_PROCESS_DESCRIPTION_PFR_CITYWIDE_FILE: "/app/pfr-citywide.yaml"
     ports:
       - 8000:8000
     command: ['uvicorn', 'app:app', '--host', '0.0.0.0', '--port', '8000']
     networks:
       - dev
+    volumes:
+      - ./process-descriptions/pfr.yaml:/app/pfr.yaml:ro
+      - ./process-descriptions/pfr-citywide.yaml:/app/pfr-citywide.yaml:ro
+      - pfr_logs:/app/logs:rw
 
   worker:
     image: ${CONTAINER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
@@ -50,13 +61,17 @@ services:
       FP_CELERY_TASK_TLIMIT_HARD: 1800 # 30 minutes
       FP_CELERY_TASK_TLIMIT_SOFT: 1500 # 25 minutes
       FP_RESULTS_TEMP_TTL_HOURS: 24
-
+      FP_CELERY_JOB_MODE: "False"
+      FP_CELERY_QUEUE: "floodrisk-c"
       FP_JOB_STATUS_TTL_DAYS: 7
       FP_SYNC_EXECUTION_TIMEOUT_SECONDS: 10
       FP_LOG_LEVEL: "DEBUG"
+
+      PFR_PROCESS_DESCRIPTION_PFR_FILE: "/app/pfr.yaml"
+      PFR_PROCESS_DESCRIPTION_PFR_CITYWIDE_FILE: "/app/pfr-citywide.yaml"
     # ports:
     #   - ${WEBAPP_PORT_CONTAINER}:${WEBAPP_PORT}
-    command: ['celery', '-A', 'fastprocesses.worker.FP_CELERY_app', 'worker', '--loglevel=debug']
+    command: ['celery', '-A', 'fastprocesses.worker.celery_app', 'worker', '--loglevel=debug']
     networks:
       - dev
 

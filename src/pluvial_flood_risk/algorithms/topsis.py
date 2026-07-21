@@ -36,11 +36,68 @@ import math
 
 import numpy as np
 
+from ..models.pipeline import TopsisStats
+
+
+def compute_topsis_stats(
+    matrix: np.ndarray,
+    weights: np.ndarray,
+) -> TopsisStats:
+    """Compute the global statistics needed to replay this TOPSIS step on a partition.
+
+    Runs Steps 1 (L2 normalisation + weighting) and 2 (ideal extraction) on
+    the full-dataset *matrix* and returns the resulting arrays without
+    proceeding to distance computation or the closeness coefficient.  Pass the
+    returned :class:`TopsisStats` to :func:`topsis` via the ``stats`` keyword
+    argument so that workers operate on partition rows using city-wide norms
+    and ideals.
+
+    Parameters
+    ----------
+    matrix:
+        Full-dataset decision matrix, shape ``(m, n)``.
+        Same conventions as :func:`topsis`.
+    weights:
+        1-D weight array of length *n*.  Must sum to 1.0.
+
+    Returns
+    -------
+    TopsisStats
+        ``l2_norms`` — pre-normalisation column norms, shape ``(n,)``.
+        ``ideal_max`` — column-wise max of the weighted-normalised matrix.
+        ``ideal_min`` — column-wise min of the weighted-normalised matrix.
+    """
+    if matrix.ndim != 2:
+        raise ValueError(f"matrix must be 2-D, got shape {matrix.shape}")
+    m, n = matrix.shape
+    if weights.shape != (n,):
+        raise ValueError(
+            f"weights shape {weights.shape} does not match matrix columns {n}"
+        )
+
+    M = matrix.astype(float, copy=True)
+    l2_norms = np.zeros(n)
+
+    for j in range(n):
+        col_sq_sum = float(np.sum(M[:, j] ** 2))
+        l2_norms[j] = math.sqrt(col_sq_sum) if col_sq_sum > 0.0 else 0.0
+        if col_sq_sum == 0.0:
+            M[:, j] = 0.0
+        else:
+            M[:, j] = M[:, j] / l2_norms[j] * weights[j]
+
+    return TopsisStats(
+        l2_norms=l2_norms,
+        ideal_max=M.max(axis=0),
+        ideal_min=M.min(axis=0),
+    )
+
 
 def topsis(
     matrix: np.ndarray,
     weights: np.ndarray,
     *,
+    stats: TopsisStats | None = None,
     apply_entropy: bool = True,
 ) -> np.ndarray:
     """Compute TOPSIS closeness coefficients for a decision matrix.
@@ -55,6 +112,13 @@ def topsis(
         caller and assigned ``np.nan`` in the output.
     weights:
         1-D array of length *n*.  Must be non-negative and sum to 1.0.
+    stats:
+        Pre-computed :class:`TopsisStats` from :func:`compute_topsis_stats`
+        run on the full dataset.  When provided, ``l2_norms`` are used for
+        column normalisation (Step 1) and ``ideal_max`` / ``ideal_min`` are
+        used for distance computation (Step 2) instead of values derived from
+        *matrix* alone.  Pass ``None`` (default) to compute everything from
+        *matrix* — the behaviour is identical to the single-partition case.
     apply_entropy:
         If ``True`` (default), multiply each closeness coefficient by the
         Shannon entropy index U_i (Eq. 6).
@@ -79,18 +143,27 @@ def topsis(
     # ------------------------------------------------------------------
     # Step 1 — Column-wise L2 normalisation + weighting  (Eq. 4)
     # ------------------------------------------------------------------
-    for j in range(n):
-        col_sq_sum = float(np.sum(M[:, j] ** 2))
-        if col_sq_sum == 0.0:
-            M[:, j] = 0.0
-        else:
-            M[:, j] = M[:, j] / math.sqrt(col_sq_sum) * weights[j]
+    if stats is not None:
+        # Use city-wide norms so the partition is normalised identically to
+        # the full dataset.
+        for j in range(n):
+            if stats.l2_norms[j] == 0.0:
+                M[:, j] = 0.0
+            else:
+                M[:, j] = M[:, j] / stats.l2_norms[j] * weights[j]
+    else:
+        for j in range(n):
+            col_sq_sum = float(np.sum(M[:, j] ** 2))
+            if col_sq_sum == 0.0:
+                M[:, j] = 0.0
+            else:
+                M[:, j] = M[:, j] / math.sqrt(col_sq_sum) * weights[j]
 
     # ------------------------------------------------------------------
     # Step 2 — Euclidean distances from column-wise max and min  (Eq. 5)
     # ------------------------------------------------------------------
-    ideal_max = M.max(axis=0)
-    ideal_min = M.min(axis=0)
+    ideal_max = stats.ideal_max if stats is not None else M.max(axis=0)
+    ideal_min = stats.ideal_min if stats is not None else M.min(axis=0)
 
     d_from_max = np.sqrt(np.sum((M - ideal_max) ** 2, axis=1))
     d_from_min = np.sqrt(np.sum((M - ideal_min) ** 2, axis=1))

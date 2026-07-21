@@ -22,6 +22,9 @@ Non-default exponents can be supplied via ``RiskWeights``.
 
 from __future__ import annotations
 
+import logging
+import time
+
 import pandas as pd
 
 from ..models.field_names import (
@@ -34,6 +37,8 @@ from ..models.field_names import (
     SOCIAL_VULNERABILITY_FLOOD_POTENTIAL,
 )
 from ..models.inputs import RiskWeights
+
+logger = logging.getLogger(__name__)
 
 
 def compute_risk(
@@ -102,6 +107,8 @@ def run_risk_pipeline(
         ``pluvial_flood_risk_well_being`` and
         ``pluvial_flood_risk_mobility_accessibility``.
     """
+    logger.info("Risk pipeline start: %d buildings", len(df))
+    _t0 = time.perf_counter()
     result = df.copy()
     result[PLUVIAL_FLOOD_RISK_WELL_BEING] = compute_risk(
         df[SOCIAL_VULNERABILITY_FLOOD_POTENTIAL],
@@ -115,4 +122,5 @@ def run_risk_pipeline(
         df[HAZARD_MOBILITY_ACCESSIBILITY],
         params,
     )
+    logger.info("Risk pipeline complete: %.2fs", time.perf_counter() - _t0)
     return result
