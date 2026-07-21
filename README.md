@@ -2,7 +2,7 @@
 
 `pluvial-flood-risk` is a **production-ready Python library and OGC API Processes service** for
 building-level urban pluvial flood risk assessment. It implements the IPCC risk framework from
-[Vogelbacher et al. (2025)](https://doi.org/10.1016/j.envsoft.2024.106194) as a composable,
+[Vogelbacher et al. (2026, preprint)](https://doi.org/10.5194/egusphere-2025-6362) as a composable,
 fully typed, interoperable open-source package.
 
 The package is designed to be **imported and extended by other projects** (`src/pluvial_flood_risk`)
