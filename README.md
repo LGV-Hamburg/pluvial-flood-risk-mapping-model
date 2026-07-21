@@ -61,6 +61,15 @@ Results are returned as a GeoJSON `FeatureCollection` of enriched building featu
 
 **Importable library design** - The package follows the `src/` layout and ships a `py.typed` marker, making every algorithm, parameter model and utility directly importable by other Python projects. Downstream tools can compose sub-pipelines, swap individual steps, or reuse the Pydantic models as a typed configuration layer.
 
+**Unobserved operation** — The package is built for automated, unattended execution. Every
+module emits structured log records via Python's standard `logging` hierarchy
+(`logger = logging.getLogger(__name__)`), so operators can route output to any handler —
+console, file, log aggregator — at whatever verbosity the deployment requires. Validation
+warnings (e.g. dropped invalid features), remote fetch progress, partition boundaries and
+TOPSIS statistics are all observable without touching source code. No warnings are suppressed.
+This makes the service suitable for running inside CI pipelines, scheduled jobs or production
+infrastructure where no human watches the terminal.
+
 **Fully tested** - The test suite covers the algorithm at three levels: unit tests for each
 pipeline step in isolation (`test_pluvial_flood_risk.py`), regression tests against the original synthetic Hamburg example dataset (`test_example_data.py`), and end-to-end tests against the running OGC API service (`test_e2e_pipeline.py`). The regression tests load the same GeoJSON fixtures used by the reference toolbox and verify ordering, range and rank-correlation properties - including documented, deliberate deviations from the ArcPy baseline (e.g. geodetically correct EPSG:25832 area calculations instead of the Web Mercator approximations in the original). All tests run without Redis using `pytest -m regression`; the full E2E suite activates via `RUN_E2E=1`.
 
