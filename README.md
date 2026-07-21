@@ -5,9 +5,8 @@ building-level urban pluvial flood risk assessment. It implements the IPCC risk 
 [Vogelbacher et al. (2026, preprint)](https://doi.org/10.5194/egusphere-2025-6362) as a composable,
 fully typed, interoperable open-source package.
 
-The package is designed to be **imported and extended by other projects** (`src/pluvial_flood_risk`)
-and to be **deployed as a standards-compliant HTTP service** that any OGC-capable client or
-geospatial data platform can consume.
+The package is designed to be **deployed as a standards-compliant HTTP service** that any OGC-API-Processes-capable client or
+geospatial data platform can consume. Also it can be **imported as a package** and extended by other projects.
 
 ---
 
