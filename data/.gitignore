@@ -3,10 +3,7 @@
 # except for
 !.gitignore
 !external
-!external/README.md
 !interim
-!interim/README.md
 !processed
-!processed/README.md
 !raw
-!raw/README.md
+!test

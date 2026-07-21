@@ -1,0 +1,530 @@
+id: pluvial-flood-risk-citywide
+title: "Pluvial Flood Risk (City-wide)"
+version: "1.0.0"
+description: >-
+  Calculates building-level pluvial flood risk indices (PFR_WB, PFR_MA)
+  following the IPCC risk framework (Vogelbacher et al., 2025): Risk = Hazard^a
+  x Exposure^b x Vulnerability^c. The four sub-pipelines run in parallel via a
+  data fan-out pattern: vulnerability runs globally across all buildings, 
+  then each statistical unit is processed on a separate worker (N-way data parallelism). 
+  Prefer this variant for full-city runs; use pluvial-flood-risk-regional for 
+  focused sub-area analysis.
+jobControlOptions:
+  - async-execute
+outputTransmission:
+  - value
+#
+inputs:
+  buildings:
+    title: "Buildings Feature Collection"
+    description: >-
+      GeoJSON FeatureCollection of building footprints. Each feature must carry
+      all socio-economic indicator properties. The population field
+      'residents_in_statistical_unit' may be pre-joined onto each building
+      feature, or derived automatically from a separate 'statistical_units'
+      input (joined by attribute via 'statistical_unit_id', or spatially via
+      building centroid when that field is absent).
+    schema:
+      oneOf:
+        - allOf:
+            - format: geojson-feature-collection
+            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+            - "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/buildings-schema.json"
+        - type: object
+          required:
+            - href
+            - type
+          properties:
+            href:
+              type: string
+              format: uri
+              description: >-
+                OGC API Features items endpoint URL
+                (e.g. .../collections/{id}/items). The server paginates through
+                all pages and downloads the complete collection. Both
+                application/geo+json and application/flatgeobuf responses are
+                accepted; FlatGeobuf is decoded transparently.
+            type:
+              type: string
+              enum:
+                - application/geo+json
+                - application/flatgeobuf
+              description: Preferred media type to request from the items endpoint.
+          additionalProperties: false
+    minOccurs: 1
+    maxOccurs: 1
+  streets:
+    title: "Streets Feature Collection"
+    description: >-
+      GeoJSON FeatureCollection of street centre-line geometries. Used in the
+      mobility & accessibility hazard calculation (Step 3) to construct the 15 m
+      and 30 m buffer zones around road access.
+    schema:
+      oneOf:
+        - allOf:
+            - format: geojson-feature-collection
+            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+            - "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/streets-schema.json"
+        - type: object
+          required:
+            - href
+            - type
+          properties:
+            href:
+              type: string
+              format: uri
+              description: >-
+                OGC API Features items endpoint URL
+                (e.g. .../collections/{id}/items). The server paginates through
+                all pages and downloads the complete collection. Both
+                application/geo+json and application/flatgeobuf responses are
+                accepted; FlatGeobuf is decoded transparently.
+            type:
+              type: string
+              enum:
+                - application/geo+json
+                - application/flatgeobuf
+              description: Preferred media type to request from the items endpoint.
+          additionalProperties: false
+    minOccurs: 1
+    maxOccurs: 1
+  statistical_units:
+    title: "Statistical Units Feature Collection (optional)"
+    description: >-
+      GeoJSON FeatureCollection of statistical unit polygons carrying census
+      attributes. Required only when 'residents_in_statistical_unit' is not
+      pre-joined onto the building features. Each feature must have property:
+      'residents' (total registered residents). The statistical-unit living area
+      is derived from building geometry + floors + building_type during the
+      exposure step. Join strategy (chosen automatically): (1) Attribute join
+      — when building features carry a 'statistical_unit_id' property that
+      matches the 'statistical_unit_id' of the statistical unit features; (2)
+      Spatial join — otherwise, the centroid of each building footprint is
+      tested against the statistical unit polygons ('within' predicate). Using
+      centroids guarantees that each building is assigned to exactly one
+      statistical unit, even when footprint edges touch a unit boundary.
+    schema:
+      allOf:
+        - format: geojson-feature-collection
+        - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+        - "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/statistical-units-schema.json"
+    minOccurs: 0
+    maxOccurs: 1
+  flood_layers:
+    title: "Flood Layers — All Depth Classes"
+    description: >-
+      Combined GeoJSON FeatureCollection containing flooded-area polygons for
+      all water-depth classes. Each feature must carry a 'level_cm' property
+      (integer, typically 20–100 cm in 10 cm increments). The well-being hazard
+      pipeline (Steps 4.1–4.2) groups features by 'level_cm' and processes each
+      depth class independently. The mobility & accessibility hazard pipeline
+      (Steps 3.1–3.2) uses only features matching
+      'hazard_params.ma_flood_level_cm' (default: 30 cm).
+    schema:
+      oneOf:
+        - allOf:
+            - format: geojson-feature-collection
+            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+            - "$ref": "https://gitlab.opencode.de/lgvhh/udp/urban-pluvial-flood-risk-mapping/-/raw/main/schemas/flood-layers-schema.json"
+        - type: object
+          required:
+            - href
+            - type
+          properties:
+            href:
+              type: string
+              format: uri
+              description: >-
+                OGC API Features items endpoint URL
+                (e.g. .../collections/{id}/items). The server paginates through
+                all pages and downloads the complete collection. Both
+                application/geo+json and application/flatgeobuf responses are
+                accepted; FlatGeobuf is decoded transparently.
+            type:
+              type: string
+              enum:
+                - application/geo+json
+                - application/flatgeobuf
+              description: Preferred media type to request from the items endpoint.
+          additionalProperties: false
+    minOccurs: 1
+    maxOccurs: 1
+  vulnerability_parameters:
+    title: "Vulnerability Parameters (optional)"
+    description: >-
+      Algorithm parameters for the vulnerability pipeline (Steps 1.1-1.4). All
+      fields are optional; omitting this input applies the defaults
+      (Vogelbacher et al., 2025).
+    schema:
+      type: object
+      properties:
+        sensitivity_weights:
+          type: object
+          description: >-
+            TOPSIS weights for sensitivity indicators (Step 1.1). Must sum to
+            1.0.
+          properties:
+            children_under_10:
+              type: number
+              minimum: 0.0
+              maximum: 1.0
+              default: 0.3
+            elderly_singles_over_65:
+              type: number
+              minimum: 0.0
+              maximum: 1.0
+              default: 0.7
+            single_parents:
+              type: number
+              minimum: 0.0
+              maximum: 1.0
+              default: 0.0
+              description: >-
+                Optional sensitivity weight for single-parent households.
+                Default 0 excludes this indicator. Set > 0 and adjust other
+                weights to sum to 1.0.
+        coping_capacity_weights:
+          type: object
+          description: >-
+            TOPSIS weights for coping-capacity indicators (Step 1.2). Must sum
+            to 1.0.
+          properties:
+            social_welfare_recipients:
+              type: number
+              minimum: 0.0
+              maximum: 1.0
+              default: 0.5
+            no_highschool_diploma:
+              type: number
+              minimum: 0.0
+              maximum: 1.0
+              default: 0.5
+        svi_weights:
+          type: object
+          description: >-
+            TOPSIS weights for the SVI aggregation step (Step 1.3). Must sum
+            to 1.0.
+          properties:
+            sensitivity:
+              type: number
+              minimum: 0.0
+              maximum: 1.0
+              default: 0.5
+            coping_capacity:
+              type: number
+              minimum: 0.0
+              maximum: 1.0
+              default: 0.5
+        apply_entropy:
+          type: boolean
+          default: true
+          description: >-
+            Multiply TOPSIS closeness by the Shannon entropy index U_i (Eq.
+            6). Accounts for heterogeneity of indicator values.
+        threshold_fraction:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          default: 0.25
+          description: >-
+            Fraction of mean(SVI) added as floor before the power transform
+            (Eq. 7).
+        exponent:
+          type: number
+          minimum: 0.0
+          default: 2.0
+          description: >-
+            Power applied in the flood sensitivity transform (Eq. 7).
+    minOccurs: 0
+    maxOccurs: 1
+  hazard_parameters:
+    title: "Hazard Parameters (optional)"
+    description: >-
+      Spatial and statistical parameters for the hazard calculations (Steps
+      3-4). All fields are optional; omitting this input applies the defaults
+      (Vogelbacher et al., 2025).
+    schema:
+      type: object
+      properties:
+        buffer_building_m:
+          type: number
+          minimum: 1.0
+          default: 2.0
+          description: >-
+            Buffer radius around buildings for HWB [m] (Step 4.1).
+        buffer_zone1_m:
+          type: number
+          minimum: 1.0
+          default: 5.0
+          description: >-
+            Zone 1 direct-access buffer radius for HMA [m] (Step 3.1).
+        buffer_zone2_m:
+          type: number
+          minimum: 1.0
+          default: 15.0
+          description: >-
+            Zone 2 near-street buffer radius for HMA [m] (Step 3.1).
+        buffer_zone3_m:
+          type: number
+          minimum: 1.0
+          default: 30.0
+          description: >-
+            Zone 3 extended-access buffer outer radius for HMA [m] (Step 3.1).
+        min_street_flood_area_m2:
+          type: number
+          minimum: 0.0
+          default: 4.0
+          description: >-
+            Minimum flooded street area to include in HMA [m²].
+        lognormal_shape:
+          type: number
+          minimum: 0.25
+          maximum: 1.0
+          default: 0.25
+          description: >-
+            Shape parameter σ of the log-normal CDF (Eq. 11). μ fixed at 0.
+        ma_flood_level_cm:
+          type: integer
+          minimum: 20
+          maximum: 50
+          multipleOf: 10
+          default: 30
+          description: >-
+            Water depth class [cm] from flood_layers used for the mobility &
+            accessibility hazard (Steps 3.1-3.2).
+    minOccurs: 0
+    maxOccurs: 1
+  risk_weights:
+    title: "Risk Weights (optional)"
+    description: >-
+      Exponent weights for the IPCC risk product formula (Step 5, Eq. 14/15):
+      PFR = SV_PF^a * E^b * H^c. All default to 1.0 (unweighted product) as
+      in Vogelbacher et al. (2025).
+    schema:
+      type: object
+      properties:
+        vulnerability_exponent:
+          type: number
+          minimum: 1.0
+          maximum: 3.0
+          default: 1.0
+          description: Exponent a applied to SV_PF.
+        exposure_exponent:
+          type: number
+          minimum: 1.0
+          maximum: 3.0
+          default: 1.0
+          description: Exponent b applied to E.
+        hazard_exponent:
+          type: number
+          minimum: 1.0
+          maximum: 3.0
+          default: 1.0
+          description: Exponent c applied to H.
+    minOccurs: 0
+    maxOccurs: 1
+  target_crs:
+    title: "Target CRS (optional)"
+    description: >-
+      CRS identifier for all spatial calculations. 
+      Accepted forms include EPSG tokens (e.g. 'EPSG:25832'), 
+      OGC CRS URIs, OGC URNs, and proj strings. 
+      Required when inputs carry projected (metric) coordinates. 
+      Omit for standard WGS-84 GeoJSON — UTM zone is then 
+      auto-detected from the input data centroid.
+    schema:
+      type: string
+      examples:
+        - EPSG:25832
+        - http://www.opengis.net/def/crs/EPSG/0/25832
+        - urn:ogc:def:crs:EPSG::25832
+        - EPSG:32632
+        - EPSG:2263
+    minOccurs: 0
+    maxOccurs: 1
+  n_classification_iterations:
+    title: "Number of Classification Iterations (optional)"
+    description: >-
+      Number of iterations for the head/tail-breaks classification (Step 6). "
+      Yields n+1 risk classes (no risk … very high risk).
+    schema:
+      type: integer
+      minimum: 1
+      default: 4
+    minOccurs: 0
+    maxOccurs: 1
+  output_settings:
+    title: "Output Parameters (optional)"
+    description: >-
+      Controls for the serialized GeoJSON output payload.
+    schema:
+      type: object
+      properties:
+        include_input_building_properties:
+          type: boolean
+          default: true
+          description: >-
+            Include selected original building properties in the output
+            feature properties.
+        decimal_precision:
+          anyOf:
+            - type: integer
+              minimum: 0
+            - type: null
+          default: 4
+          description: >-
+            Number of decimal places for floating-point outputs. null disables
+            rounding.
+    minOccurs: 0
+    maxOccurs: 1
+
+  calculation_boundary:
+    title: "Calculation Boundary (optional)"
+    description: >-
+      GeoJSON Polygon or MultiPolygon that restricts which buildings are
+      processed in the partitionable and local steps (exposure, hazard WB,
+      hazard MA, risk scoring, and head/tail classification).
+      Steps 1.1-1.4 (TOPSIS vulnerability) still run on the full buildings
+      dataset so that city-wide L2 norms, ideal vectors, and SVI mean are
+      statistically consistent regardless of the requested sub-region.
+      When absent, the full dataset is processed.
+    schema:
+      oneOf:
+        - "$ref": "https://geojson.org/schema/Polygon.json"
+        - "$ref": "https://geojson.org/schema/MultiPolygon.json"
+    minOccurs: 0
+    maxOccurs: 1
+#
+outputs:
+  risk_buildings:
+    title: "Risk Buildings"
+    description: >-
+      GeoJSON FeatureCollection of building footprints enriched with all
+      computed columns: sensitivity_index, coping_capacity_index,
+      social_vulnerability_index, social_vulnerability_flood_potential,
+      residents_per_building, residents_ground_floor, hazard_well_being,
+      hazard_mobility_accessibility, pluvial_flood_risk_well_being,
+      pluvial_flood_risk_mobility_accessibility, risk_class_wb, risk_class_ma.
+    schema:
+      oneOf:
+        - allOf:
+            - format: geojson-feature-collection
+            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+        - type: string
+          contentMediaType: application/flatgeobuf
+          contentEncoding: binary
+  classification_breaks_wb:
+    title: "Classification Breaks — Well-Being"
+    description: >-
+      Head/tail break thresholds for pluvial_flood_risk_well_being. Use as class
+      boundaries for cartographic visualisation.
+    schema:
+      type: array
+      items:
+        type: number
+  classification_breaks_ma:
+    title: "Classification Breaks — Mobility & Accessibility"
+    description: >-
+      Head/tail break thresholds for pluvial_flood_risk_mobility_accessibility.
+    schema:
+      type: array
+      items:
+        type: number
+  voronoi_diagram:
+    title: "Voronoi (Thiessen) Diagram"
+    description: >-
+      GeoJSON FeatureCollection of Thiessen (Voronoi) polygons derived from
+      building centroids, clipped to the buffered convex hull of the study area.
+      Each polygon carries the same computed risk and vulnerability columns as
+      the corresponding building in risk_buildings. Useful for continuous
+      choropleth mapping when building footprints are too small for direct
+      visualisation at the target map scale.
+    schema:
+      oneOf:
+        - allOf:
+            - format: geojson-feature-collection
+            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+        - type: string
+          contentMediaType: application/flatgeobuf
+          contentEncoding: binary
+  # validation_report:
+  #   title: "Validation Report"
+  #   description: >-
+  #     JSON summary of buildings dropped during pipeline execution, grouped by
+  #     omission cause. Enables graceful partial execution: the pipeline continues
+  #     with valid features and reports which buildings were excluded and why.
+  #     Causes include: missing_required_property, invalid_geometry,
+  #     crs_unprojectable, join_no_statistical_unit,
+  #     negative_or_zero_floor_area, out_of_flood_layer_extent. Fields:
+  #     total_input, total_processed, total_dropped, drop_summary [{cause, count,
+  #     example_ids[]}].
+  #   schema:
+  #     type: object
+  #     required:
+  #       - total_input
+  #       - total_processed
+  #       - total_dropped
+  #       - drop_summary
+  #     properties:
+  #       total_input:
+  #         type: integer
+  #         minimum: 0
+  #       total_processed:
+  #         type: integer
+  #         minimum: 0
+  #       total_dropped:
+  #         type: integer
+  #         minimum: 0
+  #       drop_summary:
+  #         type: array
+  #         items:
+  #           type: object
+  #           required:
+  #             - cause
+  #             - count
+  #           properties:
+  #             cause:
+  #               type: string
+  #               enum:
+  #                 - missing_required_property
+  #                 - invalid_geometry
+  #                 - crs_unprojectable
+  #                 - join_no_statistical_unit
+  #                 - negative_or_zero_floor_area
+  #                 - out_of_flood_layer_extent
+  #             count:
+  #               type: integer
+  #               minimum: 1
+  #             example_ids:
+  #               type: array
+  #               items:
+  #                 type: string
+  #               maxItems: 10
+  #               description: "Up to 10 feature IDs for debugging"
+  # validation_dropped_buildings:
+  #   title: "Dropped Buildings (Spatial)"
+  #   description: >-
+  #     GeoJSON FeatureCollection (or FlatGeobuf) of all building features
+  #     excluded from processing. Each feature retains its original geometry and
+  #     properties, extended with 'omission_cause' (string) and 'omission_detail'
+  #     (string, human-readable explanation). Useful for spatial QA — load
+  #     directly into a GIS to review which areas are affected.
+  #   schema:
+  #     oneOf:
+  #       - description: "GeoJSON FeatureCollection (default)"
+  #         allOf:
+  #           - format: geojson-feature-collection
+  #           - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+  #       - description: "FlatGeobuf binary encoding"
+  #         type: string
+  #         contentEncoding: binary
+  #         contentMediaType: application/flatgeobuf
+#
+keywords:
+  - flood
+  - risk
+  - pluvial
+  - IPCC
+  - social vulnerability
+  - hazard
+  - urban

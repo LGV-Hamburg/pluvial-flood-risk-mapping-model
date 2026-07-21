@@ -1,5 +1,5 @@
 # IDE stuff
-.vscode/
+.vscode/settings.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -171,4 +171,10 @@ cython_debug/
 .pixi/
 
 # secrets
-#secrets/*
+secrets/*
+
+# scratch folder
+scratch/*
+!scratch/arcpy*
+!scratch/*.md
+!scratch/pfr_example-*.sh

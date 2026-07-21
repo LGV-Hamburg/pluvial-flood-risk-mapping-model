@@ -12,18 +12,18 @@
         "required": ["type", "geometry", "properties"],
         "properties": {
           "type": { "type": "string" },
-          "geometry": { "$ref": "https://geojson.org/schema/Polygon.json" },
+          "geometry": {
+            "oneOf": [
+              { "$ref": "https://geojson.org/schema/Polygon.json" },
+              { "$ref": "https://geojson.org/schema/MultiPolygon.json" }
+            ]
+          },
           "properties": {
             "type": "object",
             "required": [
               "id",
               "floors_above_ground",
-              "building_type",
-              "children_under_10",
-              "elderly_singles_over_65",
-              "social_welfare_recipients",
-              "no_highschool_diploma",
-              "statistical_unit_id"
+              "building_type"
             ],
             "description": "residents_in_statistical_unit and living_area_m2_statistical_unit are optional: if omitted, supply a 'statistical_units' FeatureCollection and the values will be joined automatically.",
             "properties": {
@@ -41,22 +41,27 @@
                 "description": "Building type code (1 = detached, 2 = semi-detached, \u2026)"
               },
               "children_under_10": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Number of children under 10 years (sensitivity indicator C)"
               },
               "elderly_singles_over_65": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Number of elderly singles over 65 years (sensitivity indicator ES)"
               },
+              "single_parents": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "description": "Number of single-parent households (optional sensitivity indicator SP)"
+              },
               "social_welfare_recipients": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Number of social welfare recipients (coping capacity indicator WR)"
               },
               "no_highschool_diploma": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Number of residents without high-school diploma in last 3 years (coping capacity indicator EDQ)"
               },
@@ -65,12 +70,12 @@
                 "description": "Reference key linking building to a statistical unit"
               },
               "residents_in_statistical_unit": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Total residents registered in the statistical unit"
               },
               "living_area_m2_statistical_unit": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0,
                 "description": "Total residential floor area [m\u00b2] of the statistical unit"
               }

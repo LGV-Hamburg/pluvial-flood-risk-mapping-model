@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = REPO_ROOT / "data" / "example"
+DATA_DIR = REPO_ROOT / "data" / "test"
 DEFAULT_API_URL = "http://localhost:8000/processes/pluvial_flood_risk/execution"
 
 
@@ -35,9 +35,9 @@ def _load_example_geojson(file_name: str) -> dict:
 def _build_payload() -> dict:
     return {
         "inputs": {
-            "buildings": _load_example_geojson("buildings_example.geojson"),
-            "streets": _load_example_geojson("streets_example.geojson"),
-            "flood_layers": _load_example_geojson("flood_levels_example.geojson"),
+            "buildings": _load_example_geojson("buildings.geojson"),
+            "streets": _load_example_geojson("streets.geojson"),
+            "flood_layers": _load_example_geojson("flood_levels.geojson"),
         }
     }
 

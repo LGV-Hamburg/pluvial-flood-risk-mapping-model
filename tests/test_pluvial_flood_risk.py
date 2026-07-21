@@ -315,7 +315,7 @@ class TestRunVulnerabilityPipeline:
         csv_path = (
             pathlib.Path(__file__).parents[1]
             / "data"
-            / "example"
+            / "test"
             / "Building_ExampleLayer.csv"
         )
         raw = pd.read_csv(csv_path, sep=",", decimal=".")
@@ -561,7 +561,7 @@ class TestRunExposurePipeline:
         csv_path = (
             pathlib.Path(__file__).parents[1]
             / "data"
-            / "example"
+            / "test"
             / "Building_ExampleLayer.csv"
         )
         raw = pd.read_csv(csv_path, sep=",", decimal=".")
