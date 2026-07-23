@@ -66,7 +66,7 @@ services:
       FP_JOB_STATUS_TTL_DAYS: 7
       FP_SYNC_EXECUTION_TIMEOUT_SECONDS: 10
       FP_LOG_LEVEL: "DEBUG"
-
+      PFR_ALLOWED_INPUT_ORIGINS: "http://localhost:8000,https://geodata.germanywestcentral.cloudapp.azure.com
       PFR_PROCESS_DESCRIPTION_PFR_FILE: "/app/pfr.yaml"
       PFR_PROCESS_DESCRIPTION_PFR_CITYWIDE_FILE: "/app/pfr-citywide.yaml"
     # ports:
