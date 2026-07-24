@@ -64,11 +64,14 @@ services:
       FP_CELERY_JOB_MODE: "False"
       FP_CELERY_QUEUE: "floodrisk-c"
       FP_JOB_STATUS_TTL_DAYS: 7
+      
       FP_SYNC_EXECUTION_TIMEOUT_SECONDS: 10
       FP_LOG_LEVEL: "DEBUG"
-
+      #
+      PFR_ALLOWED_INPUT_ORIGINS: "https://api.hamburg.de,http://localhost:8000,https://geodata.germanywestcentral.cloudapp.azure.com"
       PFR_PROCESS_DESCRIPTION_PFR_FILE: "/app/pfr.yaml"
       PFR_PROCESS_DESCRIPTION_PFR_CITYWIDE_FILE: "/app/pfr-citywide.yaml"
+      PFR_DROP_INVALID_INPUT_FEATURES: "True"
     # ports:
     #   - ${WEBAPP_PORT_CONTAINER}:${WEBAPP_PORT}
     command: ['celery', '-A', 'fastprocesses.worker.celery_app', 'worker', '--loglevel=debug']
