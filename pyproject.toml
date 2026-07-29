@@ -26,7 +26,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "fastprocesses (==0.23.0)",
+    "fastprocesses (==0.23.2)",
     "pydantic (>=2.12.5,<3.0.0)",
     "pydantic-settings (>=2.0,<3.0.0)",
     "numpy (>=2.4.3,<3.0.0)",
@@ -81,7 +81,7 @@ select = ["E", "F", "I"]
 
 [tool.poetry]
 name = "pluvial-flood-risk"
-version = "0.10.0"
+version = "0.11.1"
 description = "flood risk mapping"
 authors = ["Stefan Schuhart <stefan.schuhart@gv.hamburg.de>"]
 readme = "README.md"

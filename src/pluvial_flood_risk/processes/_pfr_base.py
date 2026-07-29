@@ -163,7 +163,7 @@ class BasePfRProcess:
         allowed_origins = settings.allowed_input_origins
         if not allowed_origins:
             raise ValueError(
-                "FP_ALLOWED_INPUT_ORIGINS is not set. "
+                "PFR_ALLOWED_INPUT_ORIGINS is not set. "
                 "Configure an allowlist of trusted origin prefixes "
                 "(JSON array or comma-separated) before accepting URL inputs."
             )
