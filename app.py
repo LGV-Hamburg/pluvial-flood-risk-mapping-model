@@ -13,22 +13,50 @@ import uvicorn
 from fastprocesses.api.server import OGCProcessesAPI
 from fastprocesses.common import settings
 from fastprocesses.processes.process_registry import get_process_registry
+from redis.exceptions import ResponseError as _RedisOOM
 
-import pluvial_flood_risk.processes.citywide_process  # noqa: F401
-
-# Import the process module so that @register_process fires and
-# PluvialFloodRiskProcess appears in the OGC process registry.
-import pluvial_flood_risk.processes.flood_risk_process  # noqa: F401
 from pluvial_flood_risk.settings import settings as pfr_settings
-
-# Fail loudly at startup if the expected process was not registered.
-# This catches accidental removal of the import above before any request is served.
-_REQUIRED_PROCESSES = {"pluvial-flood-risk-regional", "pluvial-flood-risk-citywide"}
-_registered = set(get_process_registry().get_process_ids())
-_missing = _REQUIRED_PROCESSES - _registered
 
 # Module-level logger for the app
 logger = logging.getLogger("pluvial-flood-risk")
+
+# ---------------------------------------------------------------------------
+# Process registration
+#
+# Each process module is imported so its @register_process decorator fires.
+# If the broker Redis/Dragonfly is out of memory it raises ResponseError.
+# We catch that per-process and log an error rather than crashing the entire
+# application — the process will be absent from the registry but the API can
+# still serve other requests (health checks, other processes).
+# Any OTHER exception (import error, YAML parse failure, etc.) is re-raised
+# immediately so programming mistakes stay loud.
+# ---------------------------------------------------------------------------
+_REQUIRED_PROCESSES = {
+    "pluvial-flood-risk-regional": "pluvial_flood_risk.processes.flood_risk_process",
+    "pluvial-flood-risk-citywide": "pluvial_flood_risk.processes.citywide_process",
+}
+_redis_oom_failures: set[str] = set()
+
+for _process_id, _module_path in _REQUIRED_PROCESSES.items():
+    try:
+        __import__(_module_path)
+    except _RedisOOM as exc:
+        logger.error(
+            "Process '%s' could not be registered — Redis broker out of memory: %s. "
+            "Free broker memory and restart the service to restore this process.",
+            _process_id, exc,
+        )
+        _redis_oom_failures.add(_process_id)
+
+# Any process that is NEITHER registered NOR failed due to Redis OOM is a
+# programming error (missing import, typo, etc.) — fail loudly.
+_registered = set(get_process_registry().get_process_ids())
+_unaccounted_missing = set(_REQUIRED_PROCESSES) - _registered - _redis_oom_failures
+if _unaccounted_missing:
+    raise RuntimeError(
+        f"Expected OGC processes not registered at startup: {_unaccounted_missing}. "
+        "Ensure all process modules are imported before OGCProcessesAPI is created."
+    )
 
 
 class _FixedUrlReferencePublisher:
@@ -45,11 +73,6 @@ class _FixedUrlReferencePublisher:
     def publish(self, payload: bytes, *, output_id: str, media_type: str) -> str:  # noqa: ARG002
         return self._href
 
-if _missing:
-    raise RuntimeError(
-        f"Expected OGC processes not registered at startup: {_missing}. "
-        "Ensure all process modules are imported before OGCProcessesAPI is created."
-    )
 
 api = OGCProcessesAPI(
     contact={
