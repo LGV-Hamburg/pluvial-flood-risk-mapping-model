@@ -167,12 +167,19 @@ class BasePfRProcess:
                 "Configure an allowlist of trusted origin prefixes "
                 "(JSON array or comma-separated) before accepting URL inputs."
             )
-        resolved = fetch_references_cached(
-            ref_map,
-            allowed_origins=allowed_origins,
-            page_limit=settings.ogc_page_limit,
-            max_concurrent_requests=settings.max_parallel_requests,
-        )
+        try:
+            resolved = fetch_references_cached(
+                ref_map,
+                allowed_origins=allowed_origins,
+                page_limit=settings.ogc_page_limit,
+                max_concurrent_requests=settings.max_parallel_requests,
+                n_sessions=settings.ogc_sessions_per_domain,
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to download remote input(s) {list(ref_map)} "
+                f"after {exc.__class__.__name__}: {exc}"
+            ) from exc
         for key, data in resolved.items():
             logger.info("Resolved '%s': %d features", key, len(data.get("features", [])))
             inputs[key] = data
