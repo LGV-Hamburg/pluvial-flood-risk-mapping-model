@@ -4,15 +4,26 @@ set -euo pipefail
 
 DATA_DIR="/home/python-dev/code/python/flood-risk-mapping-model/data/hamburg"
 
-# API_URL="${API_URL:-http://localhost:8000/processes/pluvial-flood-risk-citywide/execution}"
-API_URL="${API_URL:-https://ump-prod.germanywestcentral.cloudapp.azure.com/processes/fair2adapt:pluvial-flood-risk-citywide/execution}"
+# 2x2km
+# bbox=9.9678%2C53.5421%2C10.0196%2C53.5601
+# 5x5km
+# bbox=9.9284%2C53.5286%2C10.0590%2C53.5736
+# 10x10km
+# bbox=9.8938%2C53.5050%2C10.0928%2C53.5960
+# 15x15km
+# bbox=9.8802%2C53.4836%2C10.1072%2C53.6186
+# 20x20km
+# bbox=9.8423%2C53.4611%2C10.1451%2C53.6411
+
+API_URL="${API_URL:-http://localhost:8000/processes/pluvial-flood-risk-citywide/execution}"
+# API_URL="${API_URL:-https://ump-prod.germanywestcentral.cloudapp.azure.com/v1.0/processes/fair2adapt:pluvial-flood-risk-citywide/execution}"
 
 # OGC API Features items endpoints for the three remote inputs.
 # The /items suffix is required by the process (normative OGC API Features path).
 # streets: nutzung=Fahrbahn filters to road surfaces only; f=json requests GeoJSON.
-BUILDINGS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/buildings_footprint/collections/buildings/items?f=json&filter=floors_above_ground%20>%200&bbox=9.9763%2C53.5624%2C10.0010%2C53.5786&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
-STREETS_URL="https://api.hamburg.de/datasets/v1/feinkartierung_strasse/collections/strassenflaechen/items?f=json&nutzung=Fahrbahn&bbox=9.9763%2C53.5624%2C10.0010%2C53.5786&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
-FLOOD_LAYERS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/flood_levels/collections/sri7/items?f=json&bbox=9.9763%2C53.5624%2C10.0010%2C53.5786&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
+BUILDINGS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/buildings_footprint/collections/buildings/items?f=json&filter=floors_above_ground%20>%200&bbox=9.8802%2C53.4836%2C10.1072%2C53.6187&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
+STREETS_URL="https://api.hamburg.de/datasets/v1/feinkartierung_strasse/collections/strassenflaechen/items?f=json&nutzung=Fahrbahn&bbox=9.8802%2C53.4836%2C10.1072%2C53.6187&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
+FLOOD_LAYERS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/flood_levels/collections/sri7/items?f=json&bbox=9.8802%2C53.4836%2C10.1072%2C53.6187&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required but not installed." >&2
@@ -69,8 +80,7 @@ generate_payload() {
             outputs: {
                 voronoi_diagram: {
                     format: {
-                        mediaType: "application/geo+json",
-                        schema: "https://geojson.org/schema/FeatureCollection.json"
+                        mediaType: "application/flatgeobuf"
                     },
                     transmissionMode: "reference"
                 },
