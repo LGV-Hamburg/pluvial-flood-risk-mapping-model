@@ -4,8 +4,9 @@ import asyncio
 import logging
 import os
 import tempfile
+from contextlib import asynccontextmanager
 from itertools import cycle
-from typing import cast
+from typing import NoReturn, cast
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import aiohttp
@@ -101,6 +102,43 @@ async def _get_bytes(
         return await response.read()
 
 
+@asynccontextmanager
+async def _open_sessions(n: int, timeout: aiohttp.ClientTimeout):
+    """Async context manager yielding a pool of *n* independent ClientSessions."""
+    sessions = [aiohttp.ClientSession(timeout=timeout) for _ in range(n)]
+    try:
+        yield sessions
+    finally:
+        await asyncio.gather(*(s.close() for s in sessions))
+
+
+@asynccontextmanager
+async def _open_session_pools(domains: set[str], n: int, timeout: aiohttp.ClientTimeout):
+    """Async context manager yielding {domain: [session, ...]} pools."""
+    pools: dict[str, list[aiohttp.ClientSession]] = {
+        domain: [aiohttp.ClientSession(timeout=timeout) for _ in range(n)]
+        for domain in domains
+    }
+    try:
+        yield pools
+    finally:
+        await asyncio.gather(*(
+            s.close() for pool in pools.values() for s in pool
+        ))
+
+
+def _wrap_request_error(exc: BaseException, context: str) -> NoReturn:
+    """Log and re-raise a request error with context after retries are exhausted."""
+    if isinstance(exc, asyncio.TimeoutError):
+        logger.error("Timeout (all %d retries) %s", _MAX_RETRY_ATTEMPTS, context)
+        raise asyncio.TimeoutError(f"Timeout {context}") from exc
+    if isinstance(exc, aiohttp.ClientResponseError):
+        logger.error("HTTP %d %s", exc.status, context)
+        raise ValueError(f"HTTP {exc.status} {context}: {exc.message}") from exc
+    logger.error("Network error (all %d retries) %s: %s", _MAX_RETRY_ATTEMPTS, context, exc)
+    raise ValueError(f"Network error {context}: {exc}") from exc
+
+
 def fetch_ogc_features(
     url: str,
     *,
@@ -161,11 +199,7 @@ def fetch_ogc_features(
     semaphore = asyncio.Semaphore(max_concurrent_requests)
 
     async def _run() -> dict:
-        sessions = [
-            aiohttp.ClientSession(timeout=client_timeout)
-            for _ in range(n_sessions)
-        ]
-        try:
+        async with _open_sessions(n_sessions, client_timeout) as sessions:
             return await _fetch_ogc_features_async(
                 url,
                 sessions=sessions,
@@ -173,8 +207,6 @@ def fetch_ogc_features(
                 page_limit=page_limit,
                 semaphore=semaphore,
             )
-        finally:
-            await asyncio.gather(*(s.close() for s in sessions))
 
     return asyncio.run(_run())
 
@@ -191,18 +223,13 @@ async def _fetch_ogc_features_async(
 
     Paging strategy (in priority order):
 
-    1. ``numberMatched`` from the first page response — reflects the actual
-       item count after applying all active query filters (bbox, CQL, etc.).
-    2. ``itemCount`` from the OGC collections endpoint — fast but filter-
-       unaware (ignores bbox / CQL filters on the items URL).
-    3. Sequential ``links[rel=next]`` following — last resort when neither
-       count source is available.
+    1. ``numberMatched`` from the first page response — filter-aware count.
+    2. ``itemCount`` from the OGC collections endpoint — filter-unaware count.
+    3. Speculative parallel batching — no COUNT query; one request per session
+       per batch, stopping when a page returns fewer features than the limit.
 
-    For strategies 1 and 2, the first page (offset=0) is fetched eagerly
-    and remaining pages are dispatched in parallel.
-
-    Pages cycle through *sessions* round-robin so each session opens its own
-    TCP connections; k8s routes those to different backend replicas.
+    Pages cycle through *sessions* round-robin; k8s routes each new connection
+    to a different backend replica.
     """
     if allowed_origins is not None:
         _assert_allowed(url, allowed_origins)
@@ -216,11 +243,9 @@ async def _fetch_ogc_features_async(
     features: list[dict] = list(first_page.get("features", []))
 
     # Prefer numberMatched (filter-aware) over collections itemCount.
-    total_count: int | None = first_page.get("numberMatched")
-    count_source = "numberMatched"
-    if total_count is None:
-        total_count = await _get_item_count(url, next(session_cycle), allowed_origins)
-        count_source = "itemCount"
+    total_count, count_source = await _resolve_total_count(
+        url, first_page, next(session_cycle), allowed_origins
+    )
 
     if total_count is not None:
         remaining_offsets = list(range(page_limit, total_count, page_limit))
@@ -328,6 +353,19 @@ async def _get_item_count(
         return None
 
 
+async def _resolve_total_count(
+    url: str,
+    first_page: dict,
+    session: aiohttp.ClientSession,
+    allowed_origins: list[str] | None,
+) -> tuple[int | None, str]:
+    """Return (count, source) from numberMatched or itemCount, or (None, '')."""
+    if (count := first_page.get("numberMatched")) is not None:
+        return count, "numberMatched"
+    if (count := await _get_item_count(url, session, allowed_origins)) is not None:
+        return count, "itemCount"
+    return None, ""
+
 
 async def _fetch_page_with_offset(
     url: str,
@@ -348,31 +386,8 @@ async def _fetch_page_with_offset(
     )
     try:
         return await _get_json(page_url, session, semaphore or asyncio.Semaphore(1))
-    except asyncio.TimeoutError as exc:
-        logger.error(
-            "Timeout (all %d retries exhausted) fetching page offset=%d from %s",
-            _MAX_RETRY_ATTEMPTS, offset, page_url,
-        )
-        raise asyncio.TimeoutError(
-            f"Timeout fetching page offset={offset} from {page_url!r}"
-        ) from exc
-    except aiohttp.ClientResponseError as exc:
-        logger.error(
-            "HTTP %d fetching page offset=%d from %s",
-            exc.status, offset, page_url,
-        )
-        raise ValueError(
-            f"HTTP {exc.status} fetching page offset={offset} from {page_url!r}: "
-            f"{exc.message}"
-        ) from exc
-    except aiohttp.ClientError as exc:
-        logger.error(
-            "Network error (all %d retries exhausted) fetching page offset=%d from %s: %s",
-            _MAX_RETRY_ATTEMPTS, offset, page_url, exc,
-        )
-        raise ValueError(
-            f"Network error fetching page offset={offset} from {page_url!r}: {exc}"
-        ) from exc
+    except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
+        _wrap_request_error(exc, f"fetching page offset={offset} from {page_url!r}")
 
 
 async def _fetch_pages_speculative(
@@ -417,61 +432,6 @@ async def _fetch_pages_speculative(
         if done:
             break
         offset += batch_size * page_limit
-
-    return features
-
-
-async def _fetch_pages_sequential(
-    url: str,
-    page_limit: int,
-    sessions: list[aiohttp.ClientSession],
-    allowed_origins: list[str] | None = None,
-    semaphore: asyncio.Semaphore | None = None,
-) -> list[dict]:
-    """Fetch pages sequentially following links[rel=next]."""
-    features = []
-    next_url: str | None = _with_limit(url, page_limit)
-    page_num = 0
-    session_cycle = cycle(sessions)
-
-    while next_url:
-        if allowed_origins is not None:
-            _assert_allowed(next_url, allowed_origins)
-
-        logger.debug("Fetching sequential page %d: %s", page_num, next_url)
-        try:
-            fc = await _get_json(next_url, next(session_cycle), semaphore or asyncio.Semaphore(1))
-        except asyncio.TimeoutError as exc:
-            logger.error(
-                "Timeout (all %d retries exhausted) fetching sequential page %d from %s",
-                _MAX_RETRY_ATTEMPTS, page_num, next_url,
-            )
-            raise asyncio.TimeoutError(
-                f"Timeout fetching sequential page {page_num} from {next_url!r}"
-            ) from exc
-        except aiohttp.ClientResponseError as exc:
-            logger.error(
-                "HTTP %d fetching sequential page %d from %s",
-                exc.status, page_num, next_url,
-            )
-            raise ValueError(
-                f"HTTP {exc.status} fetching sequential page {page_num} "
-                f"from {next_url!r}: {exc.message}"
-            ) from exc
-        except aiohttp.ClientError as exc:
-            logger.error(
-                "Network error (all %d retries exhausted) on sequential page %d from %s: %s",
-                _MAX_RETRY_ATTEMPTS, page_num, next_url, exc,
-            )
-            raise ValueError(
-                f"Network error on sequential page {page_num} from {next_url!r}: {exc}"
-            ) from exc
-
-        page_features = fc.get("features", [])
-        features.extend(page_features)
-        logger.debug("Page %d: %d features (running total: %d)", page_num, len(page_features), len(features))
-        next_url = _next_link(fc)
-        page_num += 1
 
     return features
 
@@ -568,27 +528,8 @@ async def _fetch_flatgeobuf_async(
 
     try:
         data = await _get_bytes(url, session)
-    except asyncio.TimeoutError as exc:
-        logger.error(
-            "Timeout (all %d retries exhausted) fetching FlatGeobuf from %s",
-            _MAX_RETRY_ATTEMPTS, url,
-        )
-        raise asyncio.TimeoutError(
-            f"Timeout fetching FlatGeobuf from {url!r}"
-        ) from exc
-    except aiohttp.ClientResponseError as exc:
-        logger.error("HTTP %d fetching FlatGeobuf from %s", exc.status, url)
-        raise ValueError(
-            f"HTTP {exc.status} fetching FlatGeobuf from {url!r}: {exc.message}"
-        ) from exc
-    except aiohttp.ClientError as exc:
-        logger.error(
-            "Network error (all %d retries exhausted) fetching FlatGeobuf from %s: %s",
-            _MAX_RETRY_ATTEMPTS, url, exc,
-        )
-        raise ValueError(
-            f"Network error fetching FlatGeobuf from {url!r}: {exc}"
-        ) from exc
+    except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
+        _wrap_request_error(exc, f"fetching FlatGeobuf from {url!r}")
 
     logger.info("fetch_flatgeobuf: received %d bytes from %s", len(data), url)
     result = decode_flatgeobuf_bytes(data)
@@ -603,26 +544,30 @@ def fetch_all_references(
     timeout: float = 30.0,
     page_limit: int = 10000,
     max_concurrent_requests: int = 10,
+    n_sessions: int = 1,
 ) -> dict[str, dict]:
     """Fetch all ``{href, type}`` reference objects concurrently.
 
-    Creates one :class:`aiohttp.ClientSession` per distinct server domain and
-    runs all downloads in a single event loop, so connection pools are reused
-    across pages of the same server.
+    Creates *n_sessions* :class:`aiohttp.ClientSession` objects per distinct
+    server domain.  k8s routes each new TCP connection to a different backend
+    replica, so setting *n_sessions* to the replica count spreads page-level
+    load across all pods.
 
     Parameters
     ----------
     references:
         Mapping of input key → ``{href, type}`` reference object
-        (e.g. ``{"buildings": {"href": "https://…", "type": "application/geo+json"}}``.
+        (e.g. ``{"buildings": {"href": "https://…", "type": "application/geo+json"}}``).\
     allowed_origins:
         SSRF allowlist; same semantics as :func:`fetch_ogc_features`.
     timeout:
         Request timeout in seconds applied to every session. Default 30.
     page_limit:
-        Items per page for OGC Features paging. Default 1000.
+        Items per page for OGC Features paging. Default 10000.
     max_concurrent_requests:
         Global semaphore shared across all sessions. Default 10.
+    n_sessions:
+        Sessions per domain for k8s replica distribution. Default 1.
 
     Returns
     -------
@@ -636,6 +581,7 @@ def fetch_all_references(
             timeout=timeout,
             page_limit=page_limit,
             max_concurrent_requests=max_concurrent_requests,
+            n_sessions=n_sessions,
         )
     )
 
@@ -723,17 +669,9 @@ async def _fetch_all_references_async(
     """Fetch all references concurrently, n_sessions sessions per domain."""
     client_timeout = aiohttp.ClientTimeout(total=timeout)
     semaphore = asyncio.Semaphore(max_concurrent_requests)
-
     domains = {_domain(ref["href"]) for ref in references.values()}
-    session_pools: dict[str, list[aiohttp.ClientSession]] = {
-        domain: [
-            aiohttp.ClientSession(timeout=client_timeout)
-            for _ in range(n_sessions)
-        ]
-        for domain in domains
-    }
 
-    try:
+    async with _open_session_pools(domains, n_sessions, client_timeout) as session_pools:
         coros = {
             key: _fetch_reference_async(
                 ref,
@@ -751,9 +689,6 @@ async def _fetch_all_references_async(
                 raise result
             resolved[key] = result  # type: ignore[assignment]
         return resolved
-    finally:
-        all_sessions = [s for pool in session_pools.values() for s in pool]
-        await asyncio.gather(*(s.close() for s in all_sessions))
 
 
 def _assert_allowed(url: str, allowed_origins: list[str]) -> None:
