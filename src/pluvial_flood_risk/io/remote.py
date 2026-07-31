@@ -151,10 +151,10 @@ def fetch_ogc_features(
     """Fetch a complete GeoJSON FeatureCollection from an OGC API Features
     items endpoint.
 
-    Uses the OGC collections endpoint to detect itemCount and performs parallel
-    paging via offset/limit. Falls back to sequential next-link following if
-    itemCount is unavailable. Both application/geo+json and application/flatgeobuf
-    responses are decoded to in-memory GeoJSON FeatureCollection.
+    Uses ``numberMatched`` from the first page when available and otherwise
+    performs speculative parallel paging via offset/limit. Both
+    application/geo+json and application/flatgeobuf responses are decoded to
+    in-memory GeoJSON FeatureCollection.
 
     SSRF-checks every hop when allowed_origins is supplied (for user-supplied URLs).
     Omit allowed_origins for server-side URLs (no SSRF exposure).
@@ -223,10 +223,9 @@ async def _fetch_ogc_features_async(
 
     Paging strategy (in priority order):
 
-    1. ``numberMatched`` from the first page response — filter-aware count.
-    2. ``itemCount`` from the OGC collections endpoint — filter-unaware count.
-    3. Speculative parallel batching — no COUNT query; one request per session
-       per batch, stopping when a page returns fewer features than the limit.
+     1. ``numberMatched`` from the first page response — filter-aware count.
+     2. Speculative parallel batching — no count available, so page in batches
+         until a page returns fewer features than the limit.
 
     Pages cycle through *sessions* round-robin; k8s routes each new connection
     to a different backend replica.
@@ -242,10 +241,7 @@ async def _fetch_ogc_features_async(
     )
     features: list[dict] = list(first_page.get("features", []))
 
-    # Prefer numberMatched (filter-aware) over collections itemCount.
-    total_count, count_source = await _resolve_total_count(
-        url, first_page, next(session_cycle), allowed_origins
-    )
+    total_count, count_source = _resolve_total_count(first_page)
 
     if total_count is not None:
         remaining_offsets = list(range(page_limit, total_count, page_limit))
@@ -273,9 +269,11 @@ async def _fetch_ogc_features_async(
                 total_count, page_limit, count_source,
             )
     else:
-        # No count — speculative parallel batching: one request per session at
-        # sequential offsets, stop when any page returns < page_limit features.
-        # Avoids server-side COUNT; costs at most len(sessions)-1 empty requests.
+        # No filter-aware count — speculative parallel batching: one request per
+        # session at sequential offsets, stop when any page returns < page_limit
+        # features.
+        # Avoids relying on collection-wide counts for filtered requests; costs
+        # at most len(sessions)-1 empty requests.
         if len(features) < page_limit:
             logger.debug("First page exhausts all results (%d features)", len(features))
         else:
@@ -295,75 +293,10 @@ async def _fetch_ogc_features_async(
     return {"type": "FeatureCollection", "features": features}
 
 
-async def _get_item_count(
-    url: str,
-    session: aiohttp.ClientSession,
-    allowed_origins: list[str] | None = None,
-) -> int | None:
-    """Try to extract itemCount from the OGC collections endpoint.
-
-    Converts items endpoint to collections endpoint by removing the 'items'
-    path segment, then GETs the collection metadata to read itemCount.
-
-    Returns None if the conversion fails or the endpoint doesn't advertise
-    itemCount (callers should fall back to next-link following).
-    """
-    parsed = urlparse(url)
-    path_parts = parsed.path.rstrip("/").split("/")
-
-    # Check if the URL ends with 'items'
-    if path_parts[-1] != "items" or len(path_parts) < 2:
-        return None
-
-    # Reconstruct collections URL: drop /items path segment and strip all
-    # query parameters except 'f' (format) — extra params like filters are
-    # not valid on the collections endpoint and cause 400 responses.
-    collections_path = "/".join(path_parts[:-1])
-    original_query = parse_qs(parsed.query, keep_blank_values=True)
-    collections_query = {k: v for k, v in original_query.items() if k == "f"}
-    collections_url = urlunparse(
-        parsed._replace(
-            path=collections_path,
-            query=urlencode(collections_query, doseq=True),
-        )
-    )
-
-    try:
-        if allowed_origins is not None:
-            _assert_allowed(collections_url, allowed_origins)
-
-        logger.debug("Querying collections endpoint for itemCount: %s", collections_url)
-        async with session.get(collections_url) as response:
-            response.raise_for_status()
-            data = await response.json()
-
-            # Collection object should have itemCount at root level
-            if isinstance(data, dict) and "itemCount" in data:
-                count = data["itemCount"]
-                logger.debug("itemCount=%d from %s", count, collections_url)
-                return count
-
-            logger.debug(
-                "No itemCount in collection response from %s", collections_url
-            )
-            return None
-    except Exception as exc:
-        # Collections endpoint unavailable or unparseable; fall back to next-link
-        logger.debug("Could not fetch itemCount from %s: %s", collections_url, exc)
-        return None
-
-
-async def _resolve_total_count(
-    url: str,
-    first_page: dict,
-    session: aiohttp.ClientSession,
-    allowed_origins: list[str] | None,
-) -> tuple[int | None, str]:
-    """Return (count, source) from numberMatched or itemCount, or (None, '')."""
+def _resolve_total_count(first_page: dict) -> tuple[int | None, str]:
+    """Return (count, source) from numberMatched, or (None, '')."""
     if (count := first_page.get("numberMatched")) is not None:
         return count, "numberMatched"
-    if (count := await _get_item_count(url, session, allowed_origins)) is not None:
-        return count, "itemCount"
     return None, ""
 
 
@@ -423,7 +356,7 @@ async def _fetch_pages_speculative(
                 raise page
 
         done = False
-        for page in pages:
+        for page in cast(list[dict], pages):
             chunk = page.get("features", [])
             features.extend(chunk)
             if len(chunk) < page_limit:
