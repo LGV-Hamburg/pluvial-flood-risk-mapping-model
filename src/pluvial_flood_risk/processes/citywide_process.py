@@ -243,19 +243,22 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         # 4. Global vulnerability pipeline (TOPSIS over all city buildings)
         if "id" in blds_metric.columns:
             blds_metric = blds_metric.set_index("id")
-        blds_metric = run_vulnerability_pipeline(blds_metric, inp.vulnerability_parameters)
+        # Kept distinct from blds_metric to avoid overwriting the input dataset.
+        blds_scored = run_vulnerability_pipeline(
+            blds_metric, inp.vulnerability_parameters
+        )
         logger.info(
             "split_inputs: global vulnerability done in %.1fs, %d buildings",
-            time.perf_counter() - _t0, len(blds_metric),
+            time.perf_counter() - _t0, len(blds_scored),
         )
 
         # 5. Optional boundary clip: only score buildings inside the boundary
         if inp.calculation_boundary is not None:
-            before = len(blds_metric)
-            blds_metric = filter_gdf_to_boundary(blds_metric, inp.calculation_boundary)
+            before = len(blds_scored)
+            blds_scored = filter_gdf_to_boundary(blds_scored, inp.calculation_boundary)
             logger.info(
                 "split_inputs: calculation_boundary applied — %d/%d buildings",
-                len(blds_metric), before,
+                len(blds_scored), before,
             )
 
         # 6. Build streets and flood GDFs (metric CRS)
@@ -266,7 +269,7 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         flood_metric = project_crs_to_metric(
             convert_geojson_to_gdf(inp.flood_layers["features"], inp.target_crs),
             inp.target_crs,
-            blds_metric,
+            blds_scored,
         )
 
         # 7. Partition by statistical unit and build work items
@@ -280,7 +283,7 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         }
 
         items: list[dict] = []
-        for unit_id, unit_blds in blds_metric.groupby(STATISTICAL_UNIT_ID):
+        for unit_id, unit_blds in blds_scored.groupby(STATISTICAL_UNIT_ID):
             halo = unit_blds.buffer(_HAZARD_BUFFER_HALO_M).union_all()
             halo_streets = streets_metric[streets_metric.intersects(halo)]
             halo_flood = flood_metric[flood_metric.intersects(halo)]
