@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 _MAX_RETRY_ATTEMPTS = 10
 
+_FETCH_TIMEOUT = aiohttp.ClientTimeout(
+    connect=2.0,
+    sock_connect=2.0,
+    sock_read=40.0,
+    # total=40 no total
+)
 
 def _is_retryable(exc: BaseException) -> bool:
     """Return True for exceptions that warrant a retry.
@@ -475,7 +481,7 @@ def fetch_all_references(
     references: dict[str, dict],
     *,
     allowed_origins: list[str] | None = None,
-    timeout: float = 30.0,
+    timeout: aiohttp.ClientTimeout = _FETCH_TIMEOUT,
     page_limit: int = 10000,
     max_concurrent_requests: int = 10,
     n_sessions: int = 1,
@@ -595,13 +601,13 @@ async def _fetch_all_references_async(
     references: dict[str, dict],
     *,
     allowed_origins: list[str] | None,
-    timeout: float,
+    timeout: aiohttp.ClientTimeout,
     page_limit: int,
     max_concurrent_requests: int,
     n_sessions: int = 1,
 ) -> dict[str, dict]:
     """Fetch all references concurrently, n_sessions sessions per domain."""
-    client_timeout = aiohttp.ClientTimeout(total=timeout)
+    client_timeout = timeout
     semaphore = asyncio.Semaphore(max_concurrent_requests)
     domains = {_domain(ref["href"]) for ref in references.values()}
 
