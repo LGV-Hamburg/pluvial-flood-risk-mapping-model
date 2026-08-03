@@ -11,7 +11,6 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import aiohttp
 import geopandas as gpd
-import joblib
 from fastprocesses.core.exceptions import SSRFBlockedError
 from tenacity import (
     RetryCallState,
@@ -20,6 +19,8 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential_jitter,
 )
+
+import joblib
 
 from ..settings import settings
 
