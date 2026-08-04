@@ -26,7 +26,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "fastprocesses (==0.23.3)",
+    "fastprocesses (==0.24.0rc0)",
     "pydantic (>=2.12.5,<3.0.0)",
     "pydantic-settings (>=2.0,<3.0.0)",
     "numpy (>=2.4.3,<3.0.0)",
@@ -88,6 +88,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
+fastprocesses = {allow-prereleases = true}
 
 [tool.poetry.group.dev.dependencies]
 # formatting, quality, tests
