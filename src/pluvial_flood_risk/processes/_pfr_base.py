@@ -10,13 +10,13 @@ This module extracts that shared logic so neither process class duplicates it.
 from __future__ import annotations
 
 import io
-import json
 import logging
 from collections import Counter
 from typing import ClassVar
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import geopandas as gpd
+import orjson
 from fastprocesses import BaseProcessResult
 from pyproj import CRS as ProjCRS
 from referencing import Registry
@@ -167,12 +167,19 @@ class BasePfRProcess:
                 "Configure an allowlist of trusted origin prefixes "
                 "(JSON array or comma-separated) before accepting URL inputs."
             )
-        resolved = fetch_references_cached(
-            ref_map,
-            allowed_origins=allowed_origins,
-            page_limit=settings.ogc_page_limit,
-            max_concurrent_requests=settings.max_parallel_requests,
-        )
+        try:
+            resolved = fetch_references_cached(
+                ref_map,
+                allowed_origins=allowed_origins,
+                page_limit=settings.ogc_page_limit,
+                max_concurrent_requests=settings.max_parallel_requests,
+                n_sessions=settings.ogc_sessions_per_domain,
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to download remote input(s) {list(ref_map)} "
+                f"after {exc.__class__.__name__}: {exc}"
+            ) from exc
         for key, data in resolved.items():
             logger.info("Resolved '%s': %d features", key, len(data.get("features", [])))
             inputs[key] = data
@@ -406,7 +413,7 @@ class PfRiskResult(BaseProcessResult):
         result = self.model_dump(
             mode="json", include={"risk_buildings"}
         )["risk_buildings"]
-        return json.dumps(result).encode()
+        return orjson.dumps(result)
 
     def risk_buildings_to_fgb(self) -> bytes:
         fc = self.model_dump(mode="json", include={"risk_buildings"})["risk_buildings"]
@@ -416,7 +423,7 @@ class PfRiskResult(BaseProcessResult):
         result = self.model_dump(
             mode="json", include={"voronoi_diagram"}
         )["voronoi_diagram"]
-        return json.dumps(result).encode()
+        return orjson.dumps(result)
 
     def voronoi_diagram_to_fgb(self) -> bytes:
         fc = self.model_dump(
@@ -428,13 +435,13 @@ class PfRiskResult(BaseProcessResult):
         result = self.model_dump(
             mode="json", include={"classification_breaks_wb"}
         )["classification_breaks_wb"]
-        return json.dumps(result).encode()
+        return orjson.dumps(result)
 
     def classification_breaks_ma_to_json(self) -> bytes:
         result = self.model_dump(
             mode="json", include={"classification_breaks_ma"}
         )["classification_breaks_ma"]
-        return json.dumps(result).encode()
+        return orjson.dumps(result)
 
     risk_buildings: dict | None = None
     voronoi_diagram: dict | None = None

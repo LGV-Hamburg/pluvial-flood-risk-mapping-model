@@ -60,6 +60,19 @@ class PfrSettings(BaseSettings):
     Set ``PFR_OGC_PAGE_LIMIT=<n>`` to override.
     """
 
+    ogc_sessions_per_domain: int = 1
+    """Number of independent HTTP client sessions per server domain.
+
+    Each session maintains its own TCP connection pool.  Kubernetes routes
+    new connections to different backend replicas, so setting this to the
+    number of OGC API server replicas distributes page-level parallelism
+    across all pods instead of saturating a single one.
+
+    Default ``1`` (single session, original behaviour).
+
+    Set ``PFR_OGC_SESSIONS_PER_DOMAIN=<n>`` to override.
+    """
+
     drop_invalid_input_features: bool = False
     """When *True*, features that fail validation (missing required properties
     or missing ``"geometry"`` key) are silently dropped and logged as warnings
