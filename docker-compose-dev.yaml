@@ -33,6 +33,8 @@ services:
       FP_JOB_STATUS_TTL_DAYS: 7
       FP_SYNC_EXECUTION_TIMEOUT_SECONDS: 10
       FP_LOG_LEVEL: "DEBUG"
+      FP_MAX_RESULT_SIZE_BYTES: 99614720 # 95 MB
+      FP_MAX_READ_SIZE_BYTES: 104857600 # 100 MB
 
       PFR_PROCESS_DESCRIPTION_PFR_FILE: "/app/pfr.yaml"
       PFR_PROCESS_DESCRIPTION_PFR_CITYWIDE_FILE: "/app/pfr-citywide.yaml"
@@ -53,7 +55,7 @@ services:
       FP_RESULT_CACHE_HOST: "redis"
       FP_RESULT_CACHE_PORT: 6379
       FP_RESULT_CACHE_DB: 1
-
+      #
       FP_CELERY_BROKER_HOST: "redis"
       FP_CELERY_BROKER_PORT: 6379
       FP_CELERY_BROKER_DB: 0
@@ -64,9 +66,11 @@ services:
       FP_CELERY_JOB_MODE: "False"
       FP_CELERY_QUEUE: "floodrisk-c"
       FP_JOB_STATUS_TTL_DAYS: 7
-      
+      #
       FP_SYNC_EXECUTION_TIMEOUT_SECONDS: 10
       FP_LOG_LEVEL: "DEBUG"
+      FP_MAX_RESULT_SIZE_BYTES: 99614720
+      FP_MAX_READ_SIZE_BYTES: 104857600 # 100 MB
       #
       PFR_ALLOWED_INPUT_ORIGINS: "https://api.hamburg.de,http://localhost:8000,https://geodata.germanywestcentral.cloudapp.azure.com"
       PFR_PROCESS_DESCRIPTION_PFR_FILE: "/app/pfr.yaml"
