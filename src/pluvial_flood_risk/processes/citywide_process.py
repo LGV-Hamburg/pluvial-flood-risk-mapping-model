@@ -73,6 +73,7 @@ from ._pfr_base import (
     _OUTPUT_COLUMNS,
     BasePfRProcess,
     PfRiskResult,
+    apply_optional_smoothing,
 )
 
 logger = logging.getLogger(__name__)
@@ -466,6 +467,7 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
             index=building_ids,
             dtype="float64",
         )
+        risk_df = apply_optional_smoothing(risk_df, all_features, inp)
         classified: ClassificationResult = run_classification_pipeline(
             risk_df, inp.n_classification_iterations
         )

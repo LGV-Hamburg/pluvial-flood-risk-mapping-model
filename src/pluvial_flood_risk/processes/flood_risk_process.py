@@ -80,6 +80,7 @@ from ._pfr_base import (
     _OUTPUT_COLUMNS,
     BasePfRProcess,
     PfRiskResult,
+    apply_optional_smoothing,
 )
 
 logger = logging.getLogger(__name__)
@@ -559,6 +560,7 @@ class PluvialFloodRiskProcess(BasePfRProcess, BaseScatterProcess):
         logger.info("merge_results: merging results for %d buildings", len(merged_df))
         risk_df = run_risk_pipeline(merged_df, input.risk_weights)
         logger.debug("merge_results: risk scores computed")
+        risk_df = apply_optional_smoothing(risk_df, buildings_features, input)
         classified: ClassificationResult = run_classification_pipeline(
             risk_df,
             input.n_classification_iterations,
