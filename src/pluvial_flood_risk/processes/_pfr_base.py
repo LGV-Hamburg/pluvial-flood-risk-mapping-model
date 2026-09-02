@@ -24,7 +24,7 @@ from pyproj import CRS as ProjCRS
 from referencing import Registry
 from shapely.geometry import shape as shapely_shape
 
-from ..algorithms.aggregations import create_thiessen_polygons
+from ..algorithms.aggregations import aggregate_to_healpix, create_thiessen_polygons
 from ..algorithms.classification import (
     ClassificationResult,
     run_classification_pipeline,
@@ -133,9 +133,13 @@ def finalize_risk_outputs(
 
     1. Classification MUST run first — ``build_enriched_features`` reads risk-class
        labels out of *classified*, and the breaks below are computed from it too.
-    2. The Voronoi tessellation MUST consume ``source_buildings_gdf`` returned by
-       ``build_enriched_features`` (already carrying the classification columns),
-       not the raw input buildings — otherwise Voronoi cells would lack risk labels.
+    2. The Voronoi tessellation and HEALPix aggregation MUST both consume
+       ``source_buildings_gdf`` returned by ``build_enriched_features`` (already
+       carrying the classification columns), not the raw input buildings —
+       otherwise their cells would lack risk labels. They are two distinct,
+       independently requestable alternatives for a continuous/aggregated view
+       alongside ``risk_buildings`` — Voronoi via Delaunay-neighbour smoothed
+       per-building cells, HEALPix via a fixed geometric grid.
 
     Callers must run smoothing (:func:`apply_optional_smoothing`) on *risk_df*
     themselves before calling this, since that step still differs slightly per
@@ -144,8 +148,8 @@ def finalize_risk_outputs(
     Args:
         risk_df: PFR_WB/PFR_MA (optionally smoothed) indexed by building id.
         buildings_features: GeoJSON building feature dicts, or ``None``/empty
-            when geometry is unavailable (``risk_buildings``/``voronoi_diagram``
-            outputs are then empty).
+            when geometry is unavailable (``risk_buildings``/``voronoi_diagram``/
+            ``healpix_aggregation`` outputs are then empty).
         input: Parsed pipeline parameters.
         requested: ``exec_body["outputs"]`` keys, or ``None`` for "all outputs".
         output_columns: Columns written onto each enriched building feature.
@@ -157,12 +161,13 @@ def finalize_risk_outputs(
 
     want_risk_buildings = requested is None or "risk_buildings" in requested
     want_voronoi = requested is None or "voronoi_diagram" in requested
+    want_healpix = requested is None or "healpix_aggregation" in requested
     want_breaks_wb = requested is None or "classification_breaks_wb" in requested
     want_breaks_ma = requested is None or "classification_breaks_ma" in requested
 
     enriched_features: list[dict] = []
     source_buildings_gdf = None
-    if want_risk_buildings or want_voronoi:
+    if want_risk_buildings or want_voronoi or want_healpix:
         if buildings_features:
             enriched_features, source_buildings_gdf = build_enriched_features(
                 buildings_features, classified, input,
@@ -172,7 +177,8 @@ def finalize_risk_outputs(
         else:
             logger.warning(
                 "finalize_risk_outputs: buildings geometry unavailable — "
-                "risk_buildings and voronoi_diagram will be empty"
+                "risk_buildings, voronoi_diagram, and healpix_aggregation "
+                "will be empty"
             )
 
     risk_buildings = (
@@ -181,6 +187,7 @@ def finalize_risk_outputs(
     )
 
     voronoi_diagram_fc = None
+    blds_metric = None
     if want_voronoi and source_buildings_gdf is not None:
         blds_metric = project_crs_to_metric(source_buildings_gdf, input.target_crs)
         thiessen_gdf = create_thiessen_polygons(blds_metric)
@@ -189,6 +196,24 @@ def finalize_risk_outputs(
         )
         output_crs = input.target_crs or source_crs
         voronoi_diagram_fc = json.loads(thiessen_gdf.to_crs(output_crs).to_json())
+
+    healpix_fc = None
+    if want_healpix and source_buildings_gdf is not None:
+        # Centroids must be computed on a metric CRS, else they are skewed —
+        # reuse blds_metric when voronoi already projected it.
+        healpix_input_gdf = (
+            blds_metric
+            if blds_metric is not None
+            else project_crs_to_metric(source_buildings_gdf, input.target_crs)
+        )
+        healpix_gdf = aggregate_to_healpix(
+            healpix_input_gdf,
+            depth=input.healpix_params.depth,
+            risk_columns=input.healpix_params.columns,
+            agg_func=input.healpix_params.agg_func,
+            min_buildings=input.healpix_params.min_buildings,
+        )
+        healpix_fc = json.loads(healpix_gdf.to_json())
 
     decimal_prec = input.output_settings.decimal_precision
     classification_breaks_wb = (
@@ -209,6 +234,7 @@ def finalize_risk_outputs(
     return PfRiskResult(
         risk_buildings=risk_buildings,
         voronoi_diagram=voronoi_diagram_fc,
+        healpix_aggregation=healpix_fc,
         classification_breaks_wb=classification_breaks_wb,
         classification_breaks_ma=classification_breaks_ma,
         validation_report=None,
@@ -538,6 +564,10 @@ class PfRiskResult(BaseProcessResult):
             "application/geo+json": "voronoi_diagram_to_json",
             "application/flatgeobuf": "voronoi_diagram_to_fgb",
         },
+        "healpix_aggregation": {
+            "application/geo+json": "healpix_aggregation_to_json",
+            "application/flatgeobuf": "healpix_aggregation_to_fgb",
+        },
         "classification_breaks_wb": {
             "application/json": "classification_breaks_wb_to_json",
         },
@@ -576,6 +606,18 @@ class PfRiskResult(BaseProcessResult):
         )["voronoi_diagram"]
         return self._fc_to_fgb(fc)
 
+    def healpix_aggregation_to_json(self) -> bytes:
+        result = self.model_dump(
+            mode="json", include={"healpix_aggregation"}
+        )["healpix_aggregation"]
+        return orjson.dumps(result)
+
+    def healpix_aggregation_to_fgb(self) -> bytes:
+        fc = self.model_dump(
+            mode="json", include={"healpix_aggregation"}
+        )["healpix_aggregation"]
+        return self._fc_to_fgb(fc)
+
     def classification_breaks_wb_to_json(self) -> bytes:
         result = self.model_dump(
             mode="json", include={"classification_breaks_wb"}
@@ -590,6 +632,7 @@ class PfRiskResult(BaseProcessResult):
 
     risk_buildings: dict | None = None
     voronoi_diagram: dict | None = None
+    healpix_aggregation: dict | None = None
     classification_breaks_wb: list[float] | None = None
     classification_breaks_ma: list[float] | None = None
     validation_report: dict | None = None
