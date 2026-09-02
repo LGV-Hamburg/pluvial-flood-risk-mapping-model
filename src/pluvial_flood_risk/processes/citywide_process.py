@@ -25,7 +25,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import cast
 
 import geopandas as gpd
 import pandas as pd
@@ -37,11 +36,6 @@ from pydantic import BaseModel
 
 from pluvial_flood_risk.settings import settings
 
-from ..algorithms.aggregations import create_thiessen_polygons
-from ..algorithms.classification import (
-    ClassificationResult,
-    run_classification_pipeline,
-)
 from ..algorithms.exposure import run_exposure_pipeline
 from ..algorithms.hazard_ma import run_hazard_ma_pipeline
 from ..algorithms.hazard_wb import run_hazard_wb_pipeline
@@ -60,7 +54,6 @@ from ..models.field_names import (
     STATISTICAL_UNIT_ID,
 )
 from ..models.inputs import HazardParams, ProcessInputs, RiskWeights
-from ..serialization import build_enriched_features, serialize_output_value
 from ..spatial_utils import (
     convert_geojson_to_gdf,
     filter_gdf_to_boundary,
@@ -69,11 +62,11 @@ from ..spatial_utils import (
 )
 from ._pfr_base import (
     _HAZARD_BUFFER_HALO_M,
-    _INPUT_BUILDING_OUTPUT_COLUMNS,
     _OUTPUT_COLUMNS,
     BasePfRProcess,
     PfRiskResult,
     apply_optional_smoothing,
+    finalize_risk_outputs,
 )
 
 logger = logging.getLogger(__name__)
@@ -468,62 +461,9 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
             dtype="float64",
         )
         risk_df = apply_optional_smoothing(risk_df, all_features, inp)
-        classified: ClassificationResult = run_classification_pipeline(
-            risk_df, inp.n_classification_iterations
+        return finalize_risk_outputs(
+            risk_df, all_features, inp, requested,
+            output_columns=list(_OUTPUT_COLUMNS),
+            candidate_cols=list(_OUTPUT_COLUMNS),
         )
 
-        want_risk_buildings = requested is None or "risk_buildings" in requested
-        want_voronoi = requested is None or "voronoi_diagram" in requested
-
-        enriched_features: list[dict] = []
-        source_buildings_gdf = None
-        if want_risk_buildings or want_voronoi:
-            enriched_features, source_buildings_gdf = build_enriched_features(
-                all_features, classified, inp,
-                list(_OUTPUT_COLUMNS),
-                list(_OUTPUT_COLUMNS),
-                _INPUT_BUILDING_OUTPUT_COLUMNS,
-            )
-
-        risk_buildings = (
-            {"type": "FeatureCollection", "features": enriched_features}
-            if want_risk_buildings else None
-        )
-
-        # Voronoi (optional) — same pattern as PluvialFloodRiskProcess
-        voronoi_diagram_fc = None
-        if want_voronoi and source_buildings_gdf is not None:
-            output_crs = (
-                inp.target_crs
-                or str(source_buildings_gdf.crs)
-                or "EPSG:4326"
-            )
-            blds_metric_v = project_crs_to_metric(
-                source_buildings_gdf, inp.target_crs
-            )
-            voronoi_diagram_fc = json.loads(
-                create_thiessen_polygons(blds_metric_v)
-                .to_crs(output_crs)
-                .to_json()
-            )
-
-        # Classification breaks
-        want_wb = requested is None or "classification_breaks_wb" in requested
-        want_ma = requested is None or "classification_breaks_ma" in requested
-        decimal_prec = inp.output_settings.decimal_precision
-        classification_breaks_wb = (
-            [cast(float, serialize_output_value(v, decimal_prec)) for v in classified.breaks_well_being]
-            if want_wb else None
-        )
-        classification_breaks_ma = (
-            [cast(float, serialize_output_value(v, decimal_prec)) for v in classified.breaks_mobility_accessibility]
-            if want_ma else None
-        )
-
-        return PfRiskResult(
-            risk_buildings=risk_buildings,
-            voronoi_diagram=voronoi_diagram_fc,
-            classification_breaks_wb=classification_breaks_wb,
-            classification_breaks_ma=classification_breaks_ma,
-            validation_report=None,
-        )

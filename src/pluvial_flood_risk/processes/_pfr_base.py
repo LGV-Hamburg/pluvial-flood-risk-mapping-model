@@ -10,9 +10,10 @@ This module extracts that shared logic so neither process class duplicates it.
 from __future__ import annotations
 
 import io
+import json
 import logging
 from collections import Counter
-from typing import ClassVar
+from typing import ClassVar, cast
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import geopandas as gpd
@@ -23,6 +24,11 @@ from pyproj import CRS as ProjCRS
 from referencing import Registry
 from shapely.geometry import shape as shapely_shape
 
+from ..algorithms.aggregations import create_thiessen_polygons
+from ..algorithms.classification import (
+    ClassificationResult,
+    run_classification_pipeline,
+)
 from ..algorithms.smoothing import smooth_risk_values
 from ..io import fetch_references_cached
 from ..models.field_names import (
@@ -61,6 +67,7 @@ from ..models.inputs import (
     StreetProperties,
     StreetsFeatureCollection,
 )
+from ..serialization import build_enriched_features, serialize_output_value
 from ..settings import settings
 from ..spatial_utils import (
     convert_geojson_to_gdf,
@@ -108,6 +115,104 @@ def apply_optional_smoothing(
     smoothing_gdf.index = smoothing_gdf.index.astype(str)
 
     return smooth_risk_values(risk_df, smoothing_gdf, input.smoothing_parameters)
+
+
+def finalize_risk_outputs(
+    risk_df: pd.DataFrame,
+    buildings_features: list[dict] | None,
+    input: PipelineParams,
+    requested: list[str] | None,
+    *,
+    output_columns: list[str],
+    candidate_cols: list[str],
+) -> "PfRiskResult":
+    """Classify, enrich, tessellate, and serialize the shared merge-results tail.
+
+    Identical for both PFR process variants. Order is significant and load-bearing,
+    not just conventional:
+
+    1. Classification MUST run first — ``build_enriched_features`` reads risk-class
+       labels out of *classified*, and the breaks below are computed from it too.
+    2. The Voronoi tessellation MUST consume ``source_buildings_gdf`` returned by
+       ``build_enriched_features`` (already carrying the classification columns),
+       not the raw input buildings — otherwise Voronoi cells would lack risk labels.
+
+    Callers must run smoothing (:func:`apply_optional_smoothing`) on *risk_df*
+    themselves before calling this, since that step still differs slightly per
+    variant (different building-feature lists feed the smoothing graph).
+
+    Args:
+        risk_df: PFR_WB/PFR_MA (optionally smoothed) indexed by building id.
+        buildings_features: GeoJSON building feature dicts, or ``None``/empty
+            when geometry is unavailable (``risk_buildings``/``voronoi_diagram``
+            outputs are then empty).
+        input: Parsed pipeline parameters.
+        requested: ``exec_body["outputs"]`` keys, or ``None`` for "all outputs".
+        output_columns: Columns written onto each enriched building feature.
+        candidate_cols: Numeric columns eligible for aggregation outputs.
+    """
+    classified: ClassificationResult = run_classification_pipeline(
+        risk_df, input.n_classification_iterations
+    )
+
+    want_risk_buildings = requested is None or "risk_buildings" in requested
+    want_voronoi = requested is None or "voronoi_diagram" in requested
+    want_breaks_wb = requested is None or "classification_breaks_wb" in requested
+    want_breaks_ma = requested is None or "classification_breaks_ma" in requested
+
+    enriched_features: list[dict] = []
+    source_buildings_gdf = None
+    if want_risk_buildings or want_voronoi:
+        if buildings_features:
+            enriched_features, source_buildings_gdf = build_enriched_features(
+                buildings_features, classified, input,
+                output_columns, candidate_cols,
+                _INPUT_BUILDING_OUTPUT_COLUMNS,
+            )
+        else:
+            logger.warning(
+                "finalize_risk_outputs: buildings geometry unavailable — "
+                "risk_buildings and voronoi_diagram will be empty"
+            )
+
+    risk_buildings = (
+        {"type": "FeatureCollection", "features": enriched_features}
+        if want_risk_buildings else None
+    )
+
+    voronoi_diagram_fc = None
+    if want_voronoi and source_buildings_gdf is not None:
+        blds_metric = project_crs_to_metric(source_buildings_gdf, input.target_crs)
+        thiessen_gdf = create_thiessen_polygons(blds_metric)
+        source_crs = (
+            str(source_buildings_gdf.crs) if source_buildings_gdf.crs else "EPSG:4326"
+        )
+        output_crs = input.target_crs or source_crs
+        voronoi_diagram_fc = json.loads(thiessen_gdf.to_crs(output_crs).to_json())
+
+    decimal_prec = input.output_settings.decimal_precision
+    classification_breaks_wb = (
+        [
+            cast(float, serialize_output_value(v, decimal_prec))
+            for v in classified.breaks_well_being
+        ]
+        if want_breaks_wb else None
+    )
+    classification_breaks_ma = (
+        [
+            cast(float, serialize_output_value(v, decimal_prec))
+            for v in classified.breaks_mobility_accessibility
+        ]
+        if want_breaks_ma else None
+    )
+
+    return PfRiskResult(
+        risk_buildings=risk_buildings,
+        voronoi_diagram=voronoi_diagram_fc,
+        classification_breaks_wb=classification_breaks_wb,
+        classification_breaks_ma=classification_breaks_ma,
+        validation_report=None,
+    )
 
 
 def _build_pfr_schema_registry() -> Registry:

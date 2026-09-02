@@ -17,10 +17,8 @@ Execution pattern (BaseScatterProcess / operation fan-out):
 Each branch receives the full exec_body and runs on its own Celery worker.
 """
 
-import json
 import logging
 import time
-from typing import cast
 
 import pandas as pd
 from fastprocesses.core.base_process import BaseScatterProcess, parallel_step
@@ -28,11 +26,6 @@ from fastprocesses.core.models import ProcessDescription
 from fastprocesses.core.types import JobProgressCallback
 from fastprocesses.processes.process_registry import register_process
 
-from ..algorithms.aggregations import create_thiessen_polygons
-from ..algorithms.classification import (
-    ClassificationResult,
-    run_classification_pipeline,
-)
 from ..algorithms.exposure import run_exposure_pipeline
 from ..algorithms.hazard_ma import run_hazard_ma_pipeline
 from ..algorithms.hazard_wb import run_hazard_wb_pipeline
@@ -64,7 +57,6 @@ from ..models.field_names import (
     STATISTICAL_UNIT_ID,
 )
 from ..models.inputs import ProcessInputs
-from ..serialization import build_enriched_features, serialize_output_value
 from ..settings import settings
 from ..spatial_utils import (
     convert_geojson_to_gdf,
@@ -76,11 +68,11 @@ from ..spatial_utils import (
 )
 from ._pfr_base import (
     _HAZARD_BUFFER_HALO_M,
-    _INPUT_BUILDING_OUTPUT_COLUMNS,
     _OUTPUT_COLUMNS,
     BasePfRProcess,
     PfRiskResult,
     apply_optional_smoothing,
+    finalize_risk_outputs,
 )
 
 logger = logging.getLogger(__name__)
@@ -561,103 +553,11 @@ class PluvialFloodRiskProcess(BasePfRProcess, BaseScatterProcess):
         risk_df = run_risk_pipeline(merged_df, input.risk_weights)
         logger.debug("merge_results: risk scores computed")
         risk_df = apply_optional_smoothing(risk_df, buildings_features, input)
-        classified: ClassificationResult = run_classification_pipeline(
-            risk_df,
-            input.n_classification_iterations,
-        )
-        logger.info(
-            "merge_results: classification done (%d iterations)",
-            input.n_classification_iterations,
-        )
 
-        output_columns = list(_OUTPUT_COLUMNS)
-
-        # Decide which outputs the client requested (OGC API Processes req. 27:
-        # absent "outputs" key → produce all outputs)
-        want_risk_buildings = requested is None or "risk_buildings" in requested
-        want_voronoi = requested is None or "voronoi_diagram" in requested
-        want_class_breaks_wb = (
-            requested is None or "classification_breaks_wb" in requested
-        )
-        want_class_breaks_ma = (
-            requested is None or "classification_breaks_ma" in requested
-        )
-
-        # Candidate columns for aggregation (used by HEALPix and unit aggregation)
-        candidate_cols = self._candidate_agg_columns()
-
-        # Build the enriched buildings GeoDataFrame when any output that depends
-        # on it (risk_buildings, voronoi_diagram) is requested.
-        enriched_features = None
-        source_buildings_gdf = None
-        if want_risk_buildings or want_voronoi:
-            if buildings_features is not None:
-                enriched_features, source_buildings_gdf = build_enriched_features(
-                    buildings_features, classified, input,
-                    output_columns, candidate_cols,
-                    _INPUT_BUILDING_OUTPUT_COLUMNS,
-                )
-            else:
-                logger.warning(
-                    "merge_results: buildings geometry unavailable — "
-                    "risk_buildings and voronoi_diagram will be empty"
-                )
-
-        risk_buildings = {
-            "type": "FeatureCollection", "features": enriched_features or []
-        } if want_risk_buildings else None
-
-        # Voronoi / Thiessen tessellation (optional output)
-        voronoi_diagram_fc = None
-        if want_voronoi and source_buildings_gdf is not None:
-            blds_metric = project_crs_to_metric(
-                source_buildings_gdf, input.target_crs
-            )
-            thiessen_gdf = create_thiessen_polygons(blds_metric)
-            # Reproject back to the original source CRS for GeoJSON output
-            # Reproject Voronoi back to the output CRS: target_crs when
-            # explicitly specified, otherwise the input buildings CRS.
-            source_crs = (
-                str(source_buildings_gdf.crs) if source_buildings_gdf.crs
-                else "EPSG:4326"
-            )
-            output_crs = input.target_crs or source_crs
-            voronoi_diagram_fc = json.loads(thiessen_gdf.to_crs(output_crs).to_json())
-
-        # Classification breaks (only when requested)
-        classification_breaks_wb = (
-            [
-                cast(
-                    float,
-                    serialize_output_value(
-                        value, input.output_settings.decimal_precision
-                    ),
-                )
-                for value in classified.breaks_well_being
-            ]
-            if want_class_breaks_wb
-            else None
-        )
-        classification_breaks_ma = (
-            [
-                cast(
-                    float,
-                    serialize_output_value(
-                        value, input.output_settings.decimal_precision
-                    ),
-                )
-                for value in classified.breaks_mobility_accessibility
-            ]
-            if want_class_breaks_ma
-            else None
-        )
-
-        return PfRiskResult(
-            risk_buildings=risk_buildings,
-            voronoi_diagram=voronoi_diagram_fc,
-            classification_breaks_wb=classification_breaks_wb,
-            classification_breaks_ma=classification_breaks_ma,
-            validation_report=None,
+        return finalize_risk_outputs(
+            risk_df, buildings_features, input, requested,
+            output_columns=list(_OUTPUT_COLUMNS),
+            candidate_cols=self._candidate_agg_columns(),
         )
 
     # ------------------------- Refactor helpers -------------------------
