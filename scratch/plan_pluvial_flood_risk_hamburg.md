@@ -560,6 +560,28 @@ Notes about self-intersecting/ overwise invalid geometries
 - within k8s: data store within a PVC would allow for a faster pipeline (a cache)
 - cache could be invalidated when older than x days or weak, data willbe redownloaded then
 
+### phase 10 - structured stage logging
+
+Emit structured stage markers via the standard `logging` `extra=` mechanism instead of
+free-text messages, so each pipeline stage can be correlated across the parallel
+branches and the `finalize_risk_outputs` tail, and consumed by a JSON log backend
+without message-string parsing:
+
+```python
+logger.info(
+    "stage completed",
+    extra={"run_id": run_id, "stage": "classification", "event": "end",
+           "wb_breaks": len(wb), "ma_breaks": len(ma), "duration_ms": dt_ms},
+)
+```
+
+- `run_id` correlates the 4 parallel branches + merge belonging to one job execution.
+- `stage` / `event` (`start`/`end`) make the pipeline order (section 3) verifiable at
+  runtime — the logs become a live trace of the documented sequence instead of only
+  an implicit code-execution-order guarantee.
+- Stages to instrument: `vulnerability`, `exposure`, `hazard_wb`, `hazard_ma`,
+  `smoothing`, `classification`, `enrichment`, `voronoi`.
+
 ---
 
 ## 6. New / changed files
@@ -595,3 +617,14 @@ Notes about self-intersecting/ overwise invalid geometries
   an OGC API Features items endpoint.
 - **`PluvialFloodRiskHamburg`** — source URLs configured server-side (env); inline
   GeoJSON overrides each source independently; no user URL input.
+
+# Additions
+## note from the paper authors:
+Die Darstellungklassen für die angezeigten geglätteten Well-Being Werte sind bei beiden Layern mit dem Tool "Step6_Calculating_classes_for_visualization" mit 3 Breaks berechnet. Die unterste Darstellungsgrenze/Klasse ist 0, die oberste der Maximalwert. Allerdings frage ich mich gerade, ob es nicht sinnvoller wäre, die Voronoi Zellen mit der gleichen Klasseneinteilung wie die der Gebäude abzubilden (?). 
+Buffer von 100m: Dieses Tool müsste in der letzten Fassung eigentlich schon integriert worden sein (oder hatten wir das nur für das HH-Paper angepasst, Anastasia?). 100m um den Mittelpunkt eines Gebäudes ist korrekt (wird nur relevant, wenn es keine Nachbarn gibt, die entsprechend näher sind).
+Darstellung von Zellen: Wir haben für Hamburg die erste Klasse (low) immer komplett ausgeblendet und die Grenzen der Zellen in der Farbe der Fläche dargestellt, so dass Nachbarzellen mit gleicher Farbe zu einer homogenen Farbfläche werden (Fände ich auch für Healpix vorteilhaft).
+Die Idee, diese max. Entfernung auf für das Smoothing anzuwenden finde ich sehr gut (und naheliegend…)!
+Die „echte geometrische Aggregierung“ ist ein guter Alternativvorschlag; Nachteil und Vorteil ist hier natürlich, dass das Raster unabhängig ist von der tatsächlichen Bebauung. Nachteil weil: Einzelgebäude können maßgeblich für eine einzelne Zelle sein, richtig? Das Muster gibt keine Auskunft über die zugrundeliegende Dichte?
+Mangelnde topologische Nähe: da gibt es kein Verfahren, das dies abbildet, oder? Diese Schwäche haben alle Verfahren, soweit ich das sehe.
+Die stetige Verkleinerung der Werte sehe ich insofern als eher weniger problematisch an, da die Werte ja keine absolute Aussagekraft haben. Da verschiebt sich ja quasi nur der Wertebereich? Aber ja: Schön ist es auch wieder nicht, ist uns auch schon aufgefallen…
+Daher nochmal zur healpix-Aggregation: Dein Vergleich macht deutlich, dass es zumindest ein großer Vorteil wäre, eine Alternative anzusehen, gerade auch mit Hinblick auf den Stakeholder Workshop, da könnten wir das diskutieren.
