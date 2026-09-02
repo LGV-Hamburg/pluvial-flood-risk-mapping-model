@@ -619,7 +619,283 @@ logger.info(
   GeoJSON overrides each source independently; no user URL input.
 
 # Additions
-## note from the paper authors:
+## Authors notes regarding small fixes - 2026-08-17
+1) die erste Änderung ist, das nicht die absoluten Zahlen zur Berechnung der sozialen Vulernabilität eingehen, sondern die relativen Anteile der jeweiligen Gruppe (z.B. Kinder unter 10 Jahren) zur Gesamtbevölkerung des jeweiligen statistischen Gebiets. Das betrifft die Berechnungen von Coping Capacity und Sensitivity - die exportierten Python Skripte aus GIS habe ich dir hier beigefügt. (Die Eingangsdaten können bei den beigefügten Skirpten gleich (absolut) bleiben, da das Skript diese umrechnet, oder man behält das "alte Skript", sollte dann aber relative Werte eingeben).
+
+2) die zweite Ergänzung betrifft die Darstellung der finalen gesmoothen Risikowerte auf Basis der Voronoi-Zellen, da dies nicht (momentan noch
+nicht) in der Methodenpaper-Toolbox enthalten ist und uns aufgefallen ist, dass dies im verfügbaren Preprint des Hamburg-Papers sehr sparsam beschrieben wurde. Daher wollte ich das hier nochmal kurz zusammenfassen:
+
+- nachdem die hausbasierten Risikowerte berechnet und mit dem "optionalen" Tool geglättet wurden, wurden die Häuser in (zentrale) Punkte umgewandelt, welche dann als Input für die Thiessen-Polygone gedient haben.
+- Die Voronoi-Zellen (oder Thiessen-Polygone) wurden dann auf den Umriss Hamburgs' zugeschnitten und mit einem 100m Buffer um die einzelnen Häuser verschnitten (intersected).
+
+3) Bin mir nicht sicher ob das schon erwähnt wurde, aber in der Version
+2 der Zenodo Toolbox wurde bei der Hazarberechnung von Mobiliy & Accessibility ein Multiring-Buffer statt eines normalen Buffers verwendet, sodass sich die Buffer nicht überschneiden. Da kommt es drauf an, wie das in Python umgesetzt wird.
+
+```python
+# copingCapacity - relative
+#Parameter 0: Path to the input table (Data Type: Table or Feature Class). - Layer with statistical units
+#Parameter 1: Fields to use in the calculation (Data Type: Field, multi-value for selecting multiple fields).
+#Parameter 2: Weights for each Field. Must add up to 1 and must be of the same size as the Field vector.
+#Parameter 3: Field of the absolute value. Used to calculate the relative values from paramteres 1.
+#Parameter 4: New field for storing the result (Data Type: Field)
+#Parameter 5: Boolean whether entropy is included.
+import arcpy
+import numpy as np
+import math
+# Input parameters from ModelBuilder
+table = arcpy.GetParameterAsText(0)  # Path to the input table
+fields = arcpy.GetParameterAsText(1).split(';')  # Fields to include in the calculation (semicolon-separated list)
+weights = arcpy.GetParameterAsText(2).split(';')  # Weights to include in the calculation (semicolon-separated list)
+total_field = arcpy.GetParameterAsText(3)  # Field of the total value per unit
+new_field = arcpy.GetParameterAsText(4)  # The new field to store calculated values
+entr = arcpy.GetParameterAsText(5)  # The new field to store calculated values
+#output_fc = arcpy.GetParameterAsText(6)  # Output shapefile (path)
+# Convert weights to float for calculation
+weights = [float(w) for w in weights]
+# Ensure the number of weights matches the number of fields
+if len(weights) != len(fields):
+    arcpy.AddError("The number of weights must match the number of fields.")
+    raise Exception("Number of weights does not match number of fields.")
+# Ensure the weights add up to one
+if sum(weights) != 1:
+    arcpy.AddError("The weights must add up to 1.")
+    raise Exception("Weights don't add up to 1.")
+# Add the new field if it doesn't already exist
+if len(new_field) > 10:
+    new_field = new_field[:10]  # Trim to 10 characters
+    valid_fields = [f.name for f in arcpy.ListFields(table)]  # Get existing field names
+valid_fields = [f.name for f in arcpy.ListFields(table)]  # Get existing field names
+for field in fields:
+    if field not in valid_fields:
+        arcpy.AddError(f"Field '{field}' not found in {table}. Available fields: {valid_fields}")
+        raise Exception(f"Invalid field: {field}")
+    
+if total_field not in valid_fields:
+    arcpy.AddError(f"Field '{total_field}' not found in {table}.")
+    raise Exception(f"Invalid field: {total_field}")
+if new_field not in [f.name for f in arcpy.ListFields(table)]:
+    arcpy.AddField_management(table, new_field, "DOUBLE")  # Adjust field type if needed
+# Number of records
+m = int(arcpy.GetCount_management(table)[0])  # Number of rows in the table
+n = len(weights)  # Number of fields (columns)
+# Initialize matrices
+M = np.zeros((m, n))
+null_indices = set()  # Track rows with any NULL values
+# Populate the M matrix with relative values and track NULLs
+for i in range(n):
+    with arcpy.da.SearchCursor(table, [fields[i], total_field]) as cursor:
+        for j, row in enumerate(cursor):
+            value = row[0]
+            total = row[1]
+            # Handle NULL values
+            if value is None or total is None:
+                null_indices.add(j)
+                M[j, i] = 0
+                continue
+            # If total is zero, store None-equivalent for later processing
+            if total == 0:
+                null_indices.add(j)
+                M[j, i] = np.nan
+                continue
+            # Check that value does not exceed total
+            if value > total:
+                msg = (
+                    f"Row {j + 1}: value in field '{fields[i]}' "
+                    f"({value}) cannot be greater than total "
+                    f"field '{total_field}' ({total})."
+                )
+                arcpy.AddError(msg)
+                raise Exception(msg)
+            # Calculate relative value
+            M[j, i] = value / total
+# Apply weights
+w = np.array(weights)
+M = np.nan_to_num(M)
+Zmax = np.zeros_like(M)
+Zmin = np.zeros_like(M)
+D = np.zeros(2 * m)
+C = np.zeros(m)
+# Normalize the matrix and compute Zmax/Zmin
+for i in range(n):
+    temp = sum(np.square(M[:, i]))
+    if temp == 0:
+        M[:, i] = 0
+        Zmax[:, i] = M[:, i] - max(M[:, i])
+        Zmin[:, i] = M[:, i] - min(M[:, i])
+    else:
+        M[:, i] = M[:, i] / math.sqrt(temp) * w[i]
+        Zmax[:, i] = M[:, i] - max(M[:, i])
+        Zmin[:, i] = M[:, i] - min(M[:, i])
+# Compute distances D and closeness coefficients C
+for i in range(m):
+    D[2 * i] = math.sqrt(sum(np.square(Zmax[i, :])))
+    D[2 * i + 1] = math.sqrt(sum(np.square(Zmin[i, :])))
+    if D[2 * i] + D[2 * i + 1] != 0:
+        C[i] = D[2 * i + 1] / (D[2 * i] + D[2 * i + 1])
+    else:
+        C[i] = 0
+# Compute entropy
+Entropy = np.zeros(m)
+for i in range(m):
+    if np.count_nonzero(M[i, :]) == n:
+        row_sum = sum(M[i, :])
+        if row_sum != 0:
+            M[i, :] = M[i, :] / row_sum
+        x = sum(M[i, j] * math.log(M[i, j]) for j in range(n) if M[i, j] > 0)
+        Entropy[i] = 2 + 1 / math.log(n) * x
+    else:
+        Entropy[i] = 2
+# Update the table with calculated values
+with arcpy.da.UpdateCursor(table, new_field) as cursor:
+    for j, row in enumerate(cursor):
+        if j in null_indices:
+            row[0] = None  # Restore NULL in output for rows with NULL inputs
+        elif entr in [False, 'false', 'FALSE']:
+            row[0] = C[j]
+        else: 
+            row[0] = C[j] * Entropy[j]
+        cursor.updateRow(row)
+        
+# Export the input feature class as a shapefile
+#arcpy.CopyFeatures_management(table, output_fc)
+# Set the output parameter for ModelBuilder
+#arcpy.SetParameterAsText(5, output_fc)
+```
+
+```python
+# sensitivity relative
+#Parameter 0: Path to the input table (Data Type: Table or Feature Class). - Layer with statistical units
+#Parameter 1: Fields to use in the calculation (Data Type: Field, multi-value for selecting multiple fields).
+#Parameter 2: Weights for each Field. Must add up to 1 and must be of the same size as the Field vector.
+#Parameter 3: Field of the total value per unit. Used to calculate the relative values from paramteres 1.
+#Parameter 4: New field for storing the result (Data Type: Field)
+#Parameter 5: Boolean whether entropy is included.
+import arcpy
+import numpy as np
+import math
+# Input parameters from ModelBuilder
+table = arcpy.GetParameterAsText(0)  # Path to the input table
+fields = arcpy.GetParameterAsText(1).split(';')  # Fields to include in the calculation (semicolon-separated list)
+weights = arcpy.GetParameterAsText(2).split(';')  # Weights to include in the calculation (semicolon-separated list)
+total_field = arcpy.GetParameterAsText(3)  # Field of the total value per unit
+new_field = arcpy.GetParameterAsText(4)  # The new field to store calculated values
+entr = arcpy.GetParameterAsText(5)  # The new field to store calculated values
+#output_fc = arcpy.GetParameterAsText(6)  # Output shapefile (path)
+# Convert weights to float for calculation
+weights = [float(w) for w in weights]
+# Ensure the number of weights matches the number of fields
+if len(weights) != len(fields):
+    arcpy.AddError("The number of weights must match the number of fields.")
+    raise Exception("Number of weights does not match number of fields.")
+# Ensure the weights add up to one
+if sum(weights) != 1:
+    arcpy.AddError("The weights must add up to 1.")
+    raise Exception("Weights don't add up to 1.")
+# Add the new field if it doesn't already exist
+if len(new_field) > 10:
+    new_field = new_field[:10]  # Trim to 10 characters
+    valid_fields = [f.name for f in arcpy.ListFields(table)]  # Get existing field names
+valid_fields = [f.name for f in arcpy.ListFields(table)]  # Get existing field names
+for field in fields:
+    if field not in valid_fields:
+        arcpy.AddError(f"Field '{field}' not found in {table}. Available fields: {valid_fields}")
+        raise Exception(f"Invalid field: {field}")
+    
+if total_field not in valid_fields:
+    arcpy.AddError(f"Field '{total_field}' not found in {table}.")
+    raise Exception(f"Invalid field: {total_field}")
+if new_field not in [f.name for f in arcpy.ListFields(table)]:
+    arcpy.AddField_management(table, new_field, "DOUBLE")  # Adjust field type if needed
+# Number of records
+m = int(arcpy.GetCount_management(table)[0])  # Number of rows in the table
+n = len(weights)  # Number of fields (columns)
+# Initialize matrices
+M = np.zeros((m, n))
+null_indices = set()  # Track rows with any NULL values
+# Populate the M matrix with relative values and track NULLs
+for i in range(n):
+    with arcpy.da.SearchCursor(table, [fields[i], total_field]) as cursor:
+        for j, row in enumerate(cursor):
+            value = row[0]
+            total = row[1]
+            # Handle NULL values
+            if value is None or total is None:
+                null_indices.add(j)
+                M[j, i] = 0
+                continue
+            # If total is zero, store None-equivalent for later processing
+            if total == 0:
+                null_indices.add(j)
+                M[j, i] = np.nan
+                continue
+            # Check that value does not exceed total
+            if value > total:
+                msg = (
+                    f"Row {j + 1}: value in field '{fields[i]}' "
+                    f"({value}) cannot be greater than total "
+                    f"field '{total_field}' ({total})."
+                )
+                arcpy.AddError(msg)
+                raise Exception(msg)
+            # Calculate relative value
+            M[j, i] = value / total
+            
+# Apply weights
+w = np.array(weights)
+M = np.nan_to_num(M)
+Zmax = np.zeros_like(M)
+Zmin = np.zeros_like(M)
+D = np.zeros(2 * m)
+C = np.zeros(m)
+# Normalize the matrix and compute Zmax/Zmin
+for i in range(n):
+    temp = sum(np.square(M[:, i]))
+    if temp == 0:
+        M[:, i] = 0
+        Zmax[:, i] = M[:, i] - max(M[:, i])
+        Zmin[:, i] = M[:, i] - min(M[:, i])
+    else:
+        M[:, i] = M[:, i] / math.sqrt(temp) * w[i]
+        Zmax[:, i] = M[:, i] - max(M[:, i])
+        Zmin[:, i] = M[:, i] - min(M[:, i])
+# Compute distances D and closeness coefficients C
+for i in range(m):
+    D[2 * i] = math.sqrt(sum(np.square(Zmax[i, :])))
+    D[2 * i + 1] = math.sqrt(sum(np.square(Zmin[i, :])))
+    if D[2 * i] + D[2 * i + 1] != 0:
+        C[i] = D[2 * i + 1] / (D[2 * i] + D[2 * i + 1])
+    else:
+        C[i] = 0
+# Compute entropy
+Entropy = np.zeros(m)
+for i in range(m):
+    if np.count_nonzero(M[i, :]) == n:
+        row_sum = sum(M[i, :])
+        if row_sum != 0:
+            M[i, :] = M[i, :] / row_sum
+        x = sum(M[i, j] * math.log(M[i, j]) for j in range(n) if M[i, j] > 0)
+        Entropy[i] = 2 + 1 / math.log(n) * x
+    else:
+        Entropy[i] = 2
+# Update the table with calculated values
+with arcpy.da.UpdateCursor(table, new_field) as cursor:
+    for j, row in enumerate(cursor):
+        if j in null_indices:
+            row[0] = None  # Restore NULL in output for rows with NULL inputs
+        elif entr in [False, 'false', 'FALSE']:
+            row[0] = C[j]
+        else: 
+            row[0] = C[j] * Entropy[j]
+        cursor.updateRow(row)
+        
+# Export the input feature class as a shapefile
+#arcpy.CopyFeatures_management(table, output_fc)
+# Set the output parameter for ModelBuilder
+#arcpy.SetParameterAsText(5, output_fc)
+```
+
+## notes from the paper authors - 2026-08-25
+
 Die Darstellungklassen für die angezeigten geglätteten Well-Being Werte sind bei beiden Layern mit dem Tool "Step6_Calculating_classes_for_visualization" mit 3 Breaks berechnet. Die unterste Darstellungsgrenze/Klasse ist 0, die oberste der Maximalwert. Allerdings frage ich mich gerade, ob es nicht sinnvoller wäre, die Voronoi Zellen mit der gleichen Klasseneinteilung wie die der Gebäude abzubilden (?). 
 Buffer von 100m: Dieses Tool müsste in der letzten Fassung eigentlich schon integriert worden sein (oder hatten wir das nur für das HH-Paper angepasst, Anastasia?). 100m um den Mittelpunkt eines Gebäudes ist korrekt (wird nur relevant, wenn es keine Nachbarn gibt, die entsprechend näher sind).
 Darstellung von Zellen: Wir haben für Hamburg die erste Klasse (low) immer komplett ausgeblendet und die Grenzen der Zellen in der Farbe der Fläche dargestellt, so dass Nachbarzellen mit gleicher Farbe zu einer homogenen Farbfläche werden (Fände ich auch für Healpix vorteilhaft).
