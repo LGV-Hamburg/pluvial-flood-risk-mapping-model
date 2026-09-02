@@ -17,11 +17,13 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import geopandas as gpd
 import orjson
+import pandas as pd
 from fastprocesses import BaseProcessResult
 from pyproj import CRS as ProjCRS
 from referencing import Registry
 from shapely.geometry import shape as shapely_shape
 
+from ..algorithms.smoothing import smooth_risk_values
 from ..io import fetch_references_cached
 from ..models.field_names import (
     BUILDING_LIVING_AREA_M2,
@@ -53,6 +55,7 @@ from ..models.inputs import (
     BuildingsFeatureCollection,
     FloodLayerProperties,
     FloodLayersFeatureCollection,
+    PipelineParams,
     StatisticalUnitProperties,
     StatisticalUnitsFeatureCollection,
     StreetProperties,
@@ -60,14 +63,51 @@ from ..models.inputs import (
 )
 from ..settings import settings
 from ..spatial_utils import (
+    convert_geojson_to_gdf,
     expand_boundary_by_meters,
     filter_features_to_intersecting_units,
+    project_crs_to_metric,
 )
 from ..validation import drop_invalid_features, load_schema_file
 
 logger = logging.getLogger(__name__)
 
 _HAZARD_BUFFER_HALO_M = 30.0
+
+
+def apply_optional_smoothing(
+    risk_df: pd.DataFrame,
+    buildings_features: list[dict] | None,
+    input: PipelineParams,
+) -> pd.DataFrame:
+    """Smooth PFR_WB/PFR_MA (Step 5.5) before classification, when requested.
+
+    No-op — returns *risk_df* unchanged — unless
+    ``input.smoothing_parameters.enabled`` is True and building geometry is
+    available. Shared by both PFR process variants so smoothing behaves
+    identically regardless of which one is invoked.
+
+    Args:
+        risk_df: Risk DataFrame indexed by building id (str), as returned by
+            ``run_risk_pipeline`` (must include PFR_WB/PFR_MA columns).
+        buildings_features: GeoJSON building feature dicts (any CRS), used
+            only to derive centroid coordinates for the Delaunay neighbour
+            graph. May be ``None`` when building geometry is unavailable.
+        input: Parsed pipeline parameters (``target_crs``,
+            ``smoothing_parameters``).
+    """
+    if not input.smoothing_parameters.enabled or not buildings_features:
+        return risk_df
+
+    smoothing_gdf = project_crs_to_metric(
+        convert_geojson_to_gdf(buildings_features, input.target_crs),
+        input.target_crs,
+    )
+    if "id" in smoothing_gdf.columns:
+        smoothing_gdf = smoothing_gdf.set_index("id")
+    smoothing_gdf.index = smoothing_gdf.index.astype(str)
+
+    return smooth_risk_values(risk_df, smoothing_gdf, input.smoothing_parameters)
 
 
 def _build_pfr_schema_registry() -> Registry:
