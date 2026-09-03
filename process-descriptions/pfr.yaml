@@ -323,6 +323,34 @@ inputs:
           description: Exponent c applied to H.
     minOccurs: 0
     maxOccurs: 1
+  smoothing_parameters:
+    title: "Smoothing Parameters (optional)"
+    description: >-
+      Optional Delaunay-neighbour smoothing of pluvial flood risk values
+      before classification (Step 5.5). Disabled by default.
+    schema:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          default: false
+          description: >-
+            Enable Delaunay-neighbour risk smoothing before classification.
+        iterations:
+          type: integer
+          minimum: 0
+          maximum: 20
+          default: 1
+          description: Number of smoothing passes to apply when enabled.
+        max_distance_m:
+          type: number
+          exclusiveMinimum: 0.0
+          default: 100.0
+          description: >-
+            Maximum distance [m] between Delaunay-triangulation neighbours
+            for a pair to contribute to each other's smoothed value.
+    minOccurs: 0
+    maxOccurs: 1
   target_crs:
     title: "Target CRS (optional)"
     description: >-
