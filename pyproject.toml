@@ -82,7 +82,7 @@ select = ["E", "F", "I"]
 
 [tool.poetry]
 name = "pluvial-flood-risk"
-version = "0.13.0"
+version = "0.13.1"
 description = "flood risk mapping"
 authors = ["Stefan Schuhart <stefan.schuhart@gv.hamburg.de>"]
 readme = "README.md"
