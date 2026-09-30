@@ -197,11 +197,9 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
         _t0 = time.perf_counter()
 
         # 1. Build city-wide buildings GDF (metric CRS)
-        blds_gdf = convert_geojson_to_gdf(inp.buildings["features"], inp.target_crs)
+        blds_gdf = convert_geojson_to_gdf(inp.buildings["features"])
         # Capture the source CRS before projection so we can restore it on output.
-        # For standard WGS-84 GeoJSON this is EPSG:4326; for pre-projected data it
-        # matches target_crs.  When target_crs is set the user intends both
-        # calculations *and* geographic outputs in that CRS.
+        # When target_crs is set, calculations and outputs use that CRS.
         source_crs = blds_gdf.crs.to_string() if blds_gdf.crs else "EPSG:4326"
         output_crs = inp.target_crs or source_crs
         blds_metric = project_crs_to_metric(blds_gdf, inp.target_crs)
@@ -209,7 +207,7 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
 
         # 2. Join statistical unit attributes when residents / unit IDs are absent
         stat_gdf = convert_geojson_to_gdf(
-            inp.statistical_units["features"], inp.target_crs
+            inp.statistical_units["features"]
         ) if inp.statistical_units else None
 
         needs_join = any(
@@ -257,11 +255,11 @@ class PluvialFloodRiskCitywide(BasePfRProcess, BaseParallelProcess):
 
         # 6. Build streets and flood GDFs (metric CRS)
         streets_metric = project_crs_to_metric(
-            convert_geojson_to_gdf(inp.streets["features"], inp.target_crs),
+            convert_geojson_to_gdf(inp.streets["features"]),
             inp.target_crs,
         )
         flood_metric = project_crs_to_metric(
-            convert_geojson_to_gdf(inp.flood_layers["features"], inp.target_crs),
+            convert_geojson_to_gdf(inp.flood_layers["features"]),
             inp.target_crs,
             blds_scored,
         )
