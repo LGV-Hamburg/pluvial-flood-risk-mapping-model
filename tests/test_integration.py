@@ -79,6 +79,7 @@ from pluvial_flood_risk.models.field_names import (
 # Import triggers @register_process side-effect — intentional.
 # ---------------------------------------------------------------------------
 from pluvial_flood_risk.processes.flood_risk_process import PluvialFloodRiskProcess
+from pluvial_flood_risk.settings import settings
 
 # ---------------------------------------------------------------------------
 # Helpers — compact GeoJSON polygon generator (Hamburg area)
@@ -120,6 +121,16 @@ def _bbox(min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> dic
             ]
         ],
     }
+
+
+_VALID_UNIT_PROPERTIES = {
+    "statistical_unit_id": 100,
+    "residents_in_statistical_unit": 500,
+    "no_highschool_diploma": 10.0,
+    "social_welfare_recipients": 20.0,
+    "elderly_singles_over_65": 30.0,
+    "children_under_10": 40.0,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -787,6 +798,141 @@ class TestExposurePipelineStatisticalUnitsJoin:
         }
         with pytest.raises(ValueError, match="statistical_units"):
             process.exposure_pipeline(bad_body)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "layer_name",
+    ["buildings", "streets", "flood_layers", "statistical_units", "buildings_local"],
+)
+def test_empty_geodata_fails_before_execution(
+    process: PluvialFloodRiskProcess, exec_body: dict, layer_name: str
+) -> None:
+    inputs = copy.deepcopy(exec_body["inputs"])
+    inputs[layer_name] = {"type": "FeatureCollection", "features": []}
+    with pytest.raises(ValueError, match=f"{layer_name}.*no features"):
+        process.late_validate(inputs)
+
+
+@pytest.mark.integration
+def test_regional_process_keeps_wgs84_downloads_with_local_target_crs(
+    process: PluvialFloodRiskProcess, exec_body: dict, monkeypatch
+) -> None:
+    body = copy.deepcopy(exec_body)
+    buildings = body["inputs"]["buildings"]
+    body["inputs"]["buildings"] = {
+        "href": "https://geodata.germanywestcentral.cloudapp.azure.com/buildings/items",
+        "type": "application/geo+json",
+    }
+    body["inputs"]["statistical_units"] = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": _bbox(
+                _LON0 - 0.001, _LAT0 - 0.001, _LON0 + 0.002, _LAT0 + 0.002
+            ),
+            "properties": _VALID_UNIT_PROPERTIES,
+        }],
+    }
+    body["inputs"]["target_crs"] = "EPSG:25832"
+    body["inputs"]["calculation_boundary"] = _bbox(
+        _LON0 - 0.001, _LAT0 - 0.001, _LON0 + 0.002, _LAT0 + 0.002
+    )
+    monkeypatch.setattr(
+        "pluvial_flood_risk.processes._pfr_base.fetch_references_cached",
+        lambda *args, **kwargs: {"buildings": buildings},
+    )
+
+    resolved = process.resolve_remote_inputs(body)
+    assert len(resolved["inputs"]["buildings_local"]["features"]) == 3
+    result = process.exposure_pipeline(resolved)
+    assert set(result[BUILDING_LIVING_AREA_M2]) == {1, 2, 3}
+
+
+@pytest.mark.integration
+def test_buildings_local_excludes_invalid_buildings(
+    process: PluvialFloodRiskProcess, exec_body: dict, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "drop_invalid_input_features", True)
+    body = copy.deepcopy(exec_body)
+    body["inputs"]["buildings"]["features"][0]["properties"].pop(
+        "floors_above_ground"
+    )
+    body["inputs"]["statistical_units"] = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": _bbox(
+                _LON0 - 0.001, _LAT0 - 0.001, _LON0 + 0.002, _LAT0 + 0.002
+            ),
+            "properties": _VALID_UNIT_PROPERTIES,
+        }],
+    }
+    body["inputs"]["calculation_boundary"] = _bbox(
+        _LON0 - 0.001, _LAT0 - 0.001, _LON0 + 0.002, _LAT0 + 0.002
+    )
+
+    resolved = process.resolve_remote_inputs(body)
+
+    assert len(resolved["inputs"]["buildings_local"]["features"]) == 2
+    assert process.late_validate(resolved["inputs"])
+
+
+@pytest.mark.integration
+def test_late_validate_does_not_modify_inputs(
+    process: PluvialFloodRiskProcess, exec_body: dict
+) -> None:
+    inputs = copy.deepcopy(exec_body["inputs"])
+    snapshot = copy.deepcopy(inputs)
+    process.late_validate(inputs)
+    assert inputs == snapshot
+
+
+@pytest.mark.integration
+def test_regional_process_reads_inline_data_in_target_crs(
+    process: PluvialFloodRiskProcess, exec_body: dict
+) -> None:
+    import geopandas as gpd
+    from shapely.geometry import mapping
+
+    def to_utm(fc: dict) -> dict:
+        gdf = gpd.GeoDataFrame.from_features(fc["features"], crs="EPSG:4326")
+        gdf = gdf.to_crs("EPSG:25832")
+        features = [
+            {
+                "type": "Feature",
+                "geometry": mapping(geom),
+                "properties": {
+                    k: v for k, v in row.items() if k != "geometry"
+                },
+            }
+            for geom, row in zip(gdf.geometry, gdf.to_dict("records"))
+        ]
+        return {"type": "FeatureCollection", "features": features}
+
+    body = copy.deepcopy(exec_body)
+    body["inputs"]["statistical_units"] = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": _bbox(
+                _LON0 - 0.001, _LAT0 - 0.001, _LON0 + 0.002, _LAT0 + 0.002
+            ),
+            "properties": {"statistical_unit_id": 100, "residents": 500},
+        }],
+    }
+    baseline = process.exposure_pipeline(
+        {**body, "inputs": {**body["inputs"], "target_crs": "EPSG:25832"}}
+    )
+
+    body["inputs"]["buildings"] = to_utm(body["inputs"]["buildings"])
+    body["inputs"]["statistical_units"] = to_utm(body["inputs"]["statistical_units"])
+    body["inputs"]["target_crs"] = "EPSG:25832"
+    result = process.exposure_pipeline(body)
+
+    assert set(result[BUILDING_LIVING_AREA_M2]) == set(
+        baseline[BUILDING_LIVING_AREA_M2]
+    )
 
 
 # ---------------------------------------------------------------------------

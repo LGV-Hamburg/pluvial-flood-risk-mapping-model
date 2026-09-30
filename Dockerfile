@@ -34,7 +34,7 @@ ARG SOURCE_COMMIT
 LABEL maintainer="Stefan Schuhart" \
       name="analytics/pluvial-flood-risk" \
       source_commit=$SOURCE_COMMIT \
-      org.opencontainers.image.version=0.13.3
+      org.opencontainers.image.version=0.13.4
 
 RUN --mount=type=cache,target=$CACHE_DIR apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates  \

@@ -296,6 +296,13 @@ class BasePfRProcess:
 
     _REFERENCE_INPUTS = ("buildings", "streets", "flood_layers")
 
+    _LAYER_VALIDATORS = (
+        ("buildings",         BuildingProperties,       BuildingsFeatureCollection),
+        ("streets",           StreetProperties,         StreetsFeatureCollection),
+        ("flood_layers",      FloodLayerProperties,     FloodLayersFeatureCollection),
+        ("statistical_units", StatisticalUnitProperties, StatisticalUnitsFeatureCollection),
+    )
+
     # ------------------------------------------------------------------
     # Remote input resolution
     # ------------------------------------------------------------------
@@ -312,20 +319,39 @@ class BasePfRProcess:
         When a ``calculation_boundary`` is present, injects ``bbox`` / ``crs`` /
         ``bbox-crs`` OGC API parameters into the streets and flood_layers URLs before
         fetching so only the relevant region is downloaded in the target CRS.
-        After fetching, derives ``buildings_local`` — the city buildings pre-filtered
-        to the statistical units that intersect the boundary.
+        Then, for remote and inline data alike, drops invalid features (when
+        ``drop_invalid_input_features`` is set) and derives ``buildings_local`` —
+        the city buildings pre-filtered to the statistical units that intersect
+        the boundary — so it is built from already-cleaned layers.
         """
         inputs = dict(exec_body["inputs"])
         references = [
             key for key in self._REFERENCE_INPUTS
             if isinstance(inputs.get(key), dict) and "href" in inputs[key]
         ]
-        if not references:
-            logger.debug("resolve_remote_inputs: all inputs are inline, skipping")
-            return exec_body
-
-        logger.info("resolve_remote_inputs: downloading remote inputs: %s", references)
         cb = inputs.get("calculation_boundary")
+        if references:
+            self._download_references(inputs, references, cb)
+
+        if settings.drop_invalid_input_features:
+            for layer_name, props_model, _ in self._LAYER_VALIDATORS:
+                fc = inputs.get(layer_name)
+                if fc is not None:
+                    inputs[layer_name] = drop_invalid_features(
+                        fc, props_model, layer_name
+                    )
+        if cb is not None:
+            self._prefilter_buildings_by_boundary_units(inputs, cb)
+
+        if references and job_progress_callback:
+            job_progress_callback(0, "Downloaded remote inputs: %s" % ", ".join(references))
+        return {**exec_body, "inputs": inputs}
+
+    def _download_references(
+        self, inputs: dict, references: list[str], cb: dict | None
+    ) -> None:
+        """Fetch URL-valued inputs and replace them in *inputs* with the data."""
+        logger.info("resolve_remote_inputs: downloading remote inputs: %s", references)
         if cb is not None:
             self._inject_bbox_params(inputs, references, cb)
             self._inject_crs_params(inputs, references, inputs.get("target_crs"))
@@ -354,13 +380,6 @@ class BasePfRProcess:
         for key, data in resolved.items():
             logger.info("Resolved '%s': %d features", key, len(data.get("features", [])))
             inputs[key] = data
-
-        if cb is not None:
-            self._prefilter_buildings_by_boundary_units(inputs, cb)
-
-        if job_progress_callback:
-            job_progress_callback(0, "Downloaded remote inputs: %s" % ", ".join(references))
-        return {**exec_body, "inputs": inputs}
 
     @staticmethod
     def _inject_bbox_params(inputs: dict, references: list[str], cb: dict) -> None:
@@ -490,19 +509,11 @@ class BasePfRProcess:
                 logger.debug(
                     "late_validate: '%s' geometry types: %s", name, dict(geom_types)
                 )
-        _LAYER_VALIDATORS = [
-            ("buildings",         BuildingProperties,       BuildingsFeatureCollection),
-            ("streets",           StreetProperties,         StreetsFeatureCollection),
-            ("flood_layers",      FloodLayerProperties,     FloodLayersFeatureCollection),
-            ("statistical_units", StatisticalUnitProperties, StatisticalUnitsFeatureCollection),
-        ]
-        for layer_name, props_model, fc_model in _LAYER_VALIDATORS:
+        for layer_name, _, fc_model in self._LAYER_VALIDATORS:
             fc = inputs.get(layer_name)
             if fc is None:
                 continue
-            if settings.drop_invalid_input_features:
-                inputs[layer_name] = drop_invalid_features(fc, props_model, layer_name)
-            else:
+            if not settings.drop_invalid_input_features:
                 fc_model.model_validate(fc)
                 logger.debug(
                     "late_validate: '%s' OK (%d features)",
