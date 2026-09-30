@@ -53,7 +53,7 @@ def build_enriched_features(
         input_building_output_columns: Source building properties to carry
             through when ``include_input_building_properties`` is enabled.
     """
-    buildings_gdf = convert_geojson_to_gdf(source_features)
+    buildings_gdf = convert_geojson_to_gdf(source_features, input.target_crs)
 
     if "id" in buildings_gdf.columns:
         buildings_gdf = buildings_gdf.set_index("id")

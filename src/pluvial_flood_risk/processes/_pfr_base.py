@@ -107,7 +107,7 @@ def apply_optional_smoothing(
         return risk_df
 
     smoothing_gdf = project_crs_to_metric(
-        convert_geojson_to_gdf(buildings_features),
+        convert_geojson_to_gdf(buildings_features, input.target_crs),
         input.target_crs,
     )
     if "id" in smoothing_gdf.columns:
@@ -448,6 +448,7 @@ class BasePfRProcess:
             units["features"],
             cb,
             expand_boundary_by_meters(cb, _HAZARD_BUFFER_HALO_M),
+            features_crs=inputs.get("target_crs"),
         )
         inputs["buildings_local"] = {"type": "FeatureCollection", "features": local_features}
         logger.info(

@@ -92,7 +92,9 @@ def _get_boundary_buildings(
     features: list[dict] = (input.buildings_local or input.buildings)["features"]
     if input.calculation_boundary is not None:
         _total = len(features)
-        features = filter_features_to_boundary(features, input.calculation_boundary)
+        features = filter_features_to_boundary(
+            features, input.calculation_boundary, input.target_crs
+        )
         logger.info(
             "%s: calculation_boundary applied — %d/%d buildings in boundary",
             step_name, len(features), _total,
@@ -512,7 +514,7 @@ class PluvialFloodRiskProcess(BasePfRProcess, BaseScatterProcess):
         if input.calculation_boundary is not None and buildings_features is not None:
             original_count = len(buildings_features)
             buildings_features = filter_features_to_boundary(
-                buildings_features, input.calculation_boundary
+                buildings_features, input.calculation_boundary, input.target_crs
             )
             _boundary_ids = {
                 str(f.get("id") or f["properties"].get("id"))
