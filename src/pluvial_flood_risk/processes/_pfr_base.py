@@ -107,7 +107,7 @@ def apply_optional_smoothing(
         return risk_df
 
     smoothing_gdf = project_crs_to_metric(
-        convert_geojson_to_gdf(buildings_features, input.target_crs),
+        convert_geojson_to_gdf(buildings_features),
         input.target_crs,
     )
     if "id" in smoothing_gdf.columns:
@@ -506,6 +506,20 @@ class BasePfRProcess:
                 logger.debug(
                     "late_validate: '%s' OK (%d features)",
                     layer_name, len(fc.get("features", [])),
+                )
+        for name in (
+            "buildings", "streets", "flood_layers", "statistical_units",
+            "buildings_local",
+        ):
+            fc = inputs.get(name)
+            if fc is not None and not fc.get("features"):
+                reason = (
+                    " Check calculation_boundary, building coordinates and CRS alignment."
+                    if name == "buildings_local"
+                    else " Check the source data and spatial filters."
+                )
+                raise ValueError(
+                    f"Input '{name}' has no features after validation.{reason}"
                 )
         logger.info("late_validate: all inputs valid")
         return True
