@@ -12,6 +12,9 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import aiohttp
 import geopandas as gpd
 from fastprocesses.core.exceptions import SSRFBlockedError
+from pyproj import CRS, Transformer
+from shapely.geometry import mapping, shape
+from shapely.ops import transform
 from tenacity import (
     RetryCallState,
     retry,
@@ -86,7 +89,46 @@ async def _get_json(
     async with semaphore:
         async with session.get(url) as response:
             response.raise_for_status()
-            return await response.json()
+            data = await response.json()
+            content_crs = response.headers.get("Content-Crs")
+            if not content_crs:
+                first_geometry = next(
+                    (feature["geometry"] for feature in data.get("features", [])
+                     if feature.get("geometry")),
+                    None,
+                )
+                if first_geometry is not None:
+                    min_lon, min_lat, max_lon, max_lat = shape(first_geometry).bounds
+                    if not (
+                        -180 <= min_lon <= max_lon <= 180
+                        and -90 <= min_lat <= max_lat <= 90
+                    ):
+                        raise ValueError(
+                            f"Missing Content-Crs for non-WGS84 GeoJSON from {url}"
+                        )
+                return data
+            try:
+                source_crs = CRS.from_user_input(content_crs.strip().strip("<>"))
+            except Exception as exc:
+                raise ValueError(
+                    f"Invalid Content-Crs {content_crs!r} from {url}"
+                ) from exc
+            if source_crs.equals(CRS.from_epsg(4326)):
+                return data
+            reproject = Transformer.from_crs(
+                source_crs, "EPSG:4326", always_xy=True
+            ).transform
+            data["features"] = [
+                {
+                    **feature,
+                    "geometry": mapping(
+                        transform(reproject, shape(feature["geometry"]))
+                    )
+                    if feature.get("geometry") else None,
+                }
+                for feature in data.get("features", [])
+            ]
+            return data
 
 
 @retry(
@@ -99,14 +141,14 @@ async def _get_json(
 async def _get_bytes(
     url: str,
     session: aiohttp.ClientSession,
-) -> bytes:
-    """Fetch raw bytes from *url* via GET.
+) -> tuple[bytes, str | None]:
+    """Fetch raw bytes and Content-Crs from *url* via GET.
 
     Same retry / exception semantics as :func:`_get_json`.
     """
     async with session.get(url) as response:
         response.raise_for_status()
-        return await response.read()
+        return await response.read(), response.headers.get("Content-Crs")
 
 
 @asynccontextmanager
@@ -376,7 +418,7 @@ async def _fetch_pages_speculative(
     return features
 
 
-def decode_flatgeobuf_bytes(data: bytes) -> dict:
+def decode_flatgeobuf_bytes(data: bytes, content_crs: str | None = None) -> dict:
     """Decode FlatGeobuf bytes into a GeoJSON FeatureCollection dict.
 
     Uses geopandas.read_file (NOT flatgeobuf.load) to avoid crashes on
@@ -387,6 +429,8 @@ def decode_flatgeobuf_bytes(data: bytes) -> dict:
     ----------
     data : bytes
         Raw FlatGeobuf binary payload.
+    content_crs : str | None
+        Response Content-Crs, used only if the file has no embedded CRS.
 
     Returns
     -------
@@ -404,6 +448,13 @@ def decode_flatgeobuf_bytes(data: bytes) -> dict:
 
     try:
         gdf = gpd.read_file(tmp_path)
+        if gdf.crs is None:
+            if not content_crs:
+                raise ValueError(
+                    "FlatGeobuf input has no CRS; cannot locate its features"
+                )
+            gdf = gdf.set_crs(CRS.from_user_input(content_crs.strip().strip("<>")))
+        gdf = gdf.to_crs("EPSG:4326")
         return {
             "type": "FeatureCollection",
             "features": list(gdf.iterfeatures()),
@@ -467,12 +518,12 @@ async def _fetch_flatgeobuf_async(
         _assert_allowed(url, allowed_origins)
 
     try:
-        data = await _get_bytes(url, session)
+        data, content_crs = await _get_bytes(url, session)
     except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
         _wrap_request_error(exc, f"fetching FlatGeobuf from {url!r}")
 
     logger.info("fetch_flatgeobuf: received %d bytes from %s", len(data), url)
-    result = decode_flatgeobuf_bytes(data)
+    result = decode_flatgeobuf_bytes(data, content_crs)
     logger.info("fetch_flatgeobuf: decoded %d features", len(result.get("features", [])))
     return result
 
