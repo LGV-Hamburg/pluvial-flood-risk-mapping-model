@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import mapping, shape
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from .models.field_names import (  # noqa: E402
@@ -173,10 +175,9 @@ def convert_geojson_to_gdf(
     features:
         GeoJSON feature list from a FeatureCollection.
     source_crs:
-        CRS to assign when no CRS is embedded in the features.  Pass
-        ``params.target_crs`` whenever the input coordinates are already in a
-        projected system (e.g. ``'EPSG:25832'``).  Defaults to ``'EPSG:4326'``
-        for standard WGS-84 GeoJSON.
+        CRS to assign when no CRS is embedded in the features.  Supply a known
+        source CRS only for data already in a projected system (e.g.
+        ``'EPSG:25832'``).  Defaults to ``'EPSG:4326'`` for WGS-84 GeoJSON.
     """
     missing = sum(1 for f in features if "geometry" not in f)
     if missing:
@@ -344,10 +345,8 @@ def filter_features_to_boundary(
         A GeoJSON Polygon/MultiPolygon **geometry** dict, or a **Feature** dict
         wrapping such a geometry.  Assumed to be in EPSG:4326 (WGS-84).
     features_crs:
-        CRS of *features* as an EPSG token or OGC URI.  When supplied and
-        different from WGS-84, the boundary is reprojected to this CRS so that
-        the intersection test is CRS-consistent.  Pass ``target_crs`` here
-        when features were fetched from an OGC API in a projected CRS.
+        Known source CRS of *features* as an EPSG token or OGC URI.  When
+        different from WGS-84, the boundary is reprojected to this CRS.
 
     Returns
     -------
@@ -363,12 +362,13 @@ def filter_features_to_boundary(
         else boundary
     )
     boundary_geom = shape(geom_dict)
-    if features_crs:
-        try:
-            _bdf = gpd.GeoDataFrame(geometry=[boundary_geom], crs="EPSG:4326")
-            boundary_geom = _bdf.to_crs(features_crs).geometry.iloc[0]  # type: ignore[assignment]
-        except Exception:
-            pass
+    first_geometry = next((f for f in features if f.get("geometry")), None)
+    if first_geometry is not None:
+        actual_crs = convert_geojson_to_gdf([first_geometry], features_crs).crs
+        if actual_crs is not None and not actual_crs.equals("EPSG:4326"):
+            boundary_geom = gpd.GeoSeries(
+                [boundary_geom], crs="EPSG:4326"
+            ).to_crs(actual_crs).iloc[0]
 
     return [
         f for f in features
@@ -411,7 +411,8 @@ def expand_boundary_by_meters(boundary: dict, meters: float) -> dict:
 
 
 def filter_features_to_intersecting_units(
-    features: list[dict], units: list[dict], boundary: dict, halo: dict
+    features: list[dict], units: list[dict], boundary: dict, halo: dict,
+    features_crs: str | None = None,
 ) -> list[dict]:
     """Return features intersecting the union of *units* that intersect *boundary*.
 
@@ -424,14 +425,17 @@ def filter_features_to_intersecting_units(
     Parameters
     ----------
     features:
-        Building feature dicts (WGS-84).
+        Building feature dicts.
     units:
-        Statistical unit feature dicts (WGS-84); may be empty.
+        Statistical unit feature dicts; may be empty.
     boundary:
         Calculation boundary geometry/Feature dict.
     halo:
         Boundary already expanded by the hazard halo; used as fallback region
         when no statistical units are supplied.
+    features_crs:
+        Declared CRS of building coordinates. Geographic-looking coordinates
+        are treated as WGS-84, as in ``convert_geojson_to_gdf``.
 
     Returns
     -------
@@ -442,12 +446,31 @@ def filter_features_to_intersecting_units(
         return shape(b["geometry"] if b.get("type") == "Feature" else b)
 
     boundary_geom = _geom(boundary)
+    first_unit = next((unit for unit in units if unit.get("geometry")), None)
+    unit_crs = (
+        convert_geojson_to_gdf([first_unit], features_crs).crs
+        if first_unit is not None else None
+    )
+    if unit_crs is not None and not unit_crs.equals("EPSG:4326"):
+        boundary_geom = cast(
+            BaseGeometry,
+            gpd.GeoSeries([boundary_geom], crs="EPSG:4326").to_crs(unit_crs).iloc[0],
+        )
     unit_geoms = [
         shape(g)
         for u in units
         if (g := u.get("geometry")) and shape(g).intersects(boundary_geom)
     ]
     region = unary_union(unit_geoms) if unit_geoms else _geom(halo)
+    region_crs = unit_crs if unit_geoms else "EPSG:4326"
+    first_geometry = next((f for f in features if f.get("geometry")), None)
+    if first_geometry is not None:
+        building_crs = convert_geojson_to_gdf([first_geometry], features_crs).crs
+        if building_crs is not None and not building_crs.equals(region_crs):
+            region = cast(
+                BaseGeometry,
+                gpd.GeoSeries([region], crs=region_crs).to_crs(building_crs).iloc[0],
+            )
     return [
         f for f in features
         if (g := f.get("geometry")) and shape(g).intersects(region)
