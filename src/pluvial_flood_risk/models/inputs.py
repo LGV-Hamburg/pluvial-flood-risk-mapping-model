@@ -213,6 +213,48 @@ class RiskWeights(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Smoothing (optional post-processing, Step 5.5)
+# ---------------------------------------------------------------------------
+
+
+class SmoothingParams(BaseModel):
+    """Optional Delaunay-neighbour smoothing of PFR_WB/PFR_MA (Step 5.5).
+
+    Reimplements the algorithm owners' legacy "optional smoothing tool":
+    each building's risk value is blended with its Delaunay-triangulation
+    neighbours, weighted by inverse distance, for buildings within
+    ``max_distance_m`` of each other. Disabled by default — output is
+    unchanged (raw per-building risk values) unless explicitly enabled.
+
+    When enabled, classification (Step 6) runs on the smoothed values.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable Delaunay-neighbour risk smoothing of "
+            "pluvial_flood_risk_well_being / pluvial_flood_risk_mobility_"
+            "accessibility before classification. Disabled by default."
+        ),
+    )
+    iterations: int = Field(
+        default=1,
+        ge=0,
+        le=20,
+        description="Number of smoothing passes to apply when enabled.",
+    )
+    max_distance_m: float = Field(
+        default=100.0,
+        gt=0.0,
+        description=(
+            "Maximum distance [m] between Delaunay-triangulation neighbours "
+            "for a pair to contribute to each other's smoothed value. "
+            "Neighbours farther apart than this are ignored."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Output formatting
 # ---------------------------------------------------------------------------
 
@@ -295,6 +337,7 @@ class PipelineParams(BaseModel):
     )
     hazard_parameters: HazardParams = Field(default_factory=HazardParams)
     risk_weights: RiskWeights = Field(default_factory=RiskWeights)
+    smoothing_parameters: SmoothingParams = Field(default_factory=SmoothingParams)
     output_settings: OutputParams = Field(default_factory=OutputParams)
     healpix_params: HealpixParams = Field(default_factory=HealpixParams)
     n_classification_iterations: int = Field(

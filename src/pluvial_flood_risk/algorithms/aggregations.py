@@ -72,13 +72,13 @@ def aggregate_to_healpix(
     if not risk_columns:
         raise ValueError("No risk columns found to aggregate to HEALPix")
 
-    # Work on a copy and ensure geographic coordinates (lon/lat)
+    # Compute centroids in the input's own CRS (ideally projected/metric) so
+    # they aren't skewed by degree-based geometry math, then reproject just
+    # the resulting points to WGS84 for the HEALPix lookup.
     bldg = buildings_gdf.copy()
-    if bldg.crs and str(bldg.crs) != "EPSG:4326":
-        bldg = bldg.to_crs("EPSG:4326")
-
-    # Compute centroids lon/lat
     centroids = bldg.geometry.centroid
+    if bldg.crs and str(bldg.crs) != "EPSG:4326":
+        centroids = centroids.to_crs("EPSG:4326")
     lon = centroids.x.values
     lat = centroids.y.values
 

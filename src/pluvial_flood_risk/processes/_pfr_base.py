@@ -10,18 +10,26 @@ This module extracts that shared logic so neither process class duplicates it.
 from __future__ import annotations
 
 import io
+import json
 import logging
 from collections import Counter
-from typing import ClassVar
+from typing import ClassVar, cast
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import geopandas as gpd
 import orjson
+import pandas as pd
 from fastprocesses import BaseProcessResult
 from pyproj import CRS as ProjCRS
 from referencing import Registry
 from shapely.geometry import shape as shapely_shape
 
+from ..algorithms.aggregations import aggregate_to_healpix, create_thiessen_polygons
+from ..algorithms.classification import (
+    ClassificationResult,
+    run_classification_pipeline,
+)
+from ..algorithms.smoothing import smooth_risk_values
 from ..io import fetch_references_cached
 from ..models.field_names import (
     BUILDING_LIVING_AREA_M2,
@@ -53,21 +61,184 @@ from ..models.inputs import (
     BuildingsFeatureCollection,
     FloodLayerProperties,
     FloodLayersFeatureCollection,
+    PipelineParams,
     StatisticalUnitProperties,
     StatisticalUnitsFeatureCollection,
     StreetProperties,
     StreetsFeatureCollection,
 )
+from ..serialization import build_enriched_features, serialize_output_value
 from ..settings import settings
 from ..spatial_utils import (
+    convert_geojson_to_gdf,
     expand_boundary_by_meters,
     filter_features_to_intersecting_units,
+    project_crs_to_metric,
 )
 from ..validation import drop_invalid_features, load_schema_file
 
 logger = logging.getLogger(__name__)
 
 _HAZARD_BUFFER_HALO_M = 30.0
+
+
+def apply_optional_smoothing(
+    risk_df: pd.DataFrame,
+    buildings_features: list[dict] | None,
+    input: PipelineParams,
+) -> pd.DataFrame:
+    """Smooth PFR_WB/PFR_MA (Step 5.5) before classification, when requested.
+
+    No-op — returns *risk_df* unchanged — unless
+    ``input.smoothing_parameters.enabled`` is True and building geometry is
+    available. Shared by both PFR process variants so smoothing behaves
+    identically regardless of which one is invoked.
+
+    Args:
+        risk_df: Risk DataFrame indexed by building id (str), as returned by
+            ``run_risk_pipeline`` (must include PFR_WB/PFR_MA columns).
+        buildings_features: GeoJSON building feature dicts (any CRS), used
+            only to derive centroid coordinates for the Delaunay neighbour
+            graph. May be ``None`` when building geometry is unavailable.
+        input: Parsed pipeline parameters (``target_crs``,
+            ``smoothing_parameters``).
+    """
+    if not input.smoothing_parameters.enabled or not buildings_features:
+        return risk_df
+
+    smoothing_gdf = project_crs_to_metric(
+        convert_geojson_to_gdf(buildings_features, input.target_crs),
+        input.target_crs,
+    )
+    if "id" in smoothing_gdf.columns:
+        smoothing_gdf = smoothing_gdf.set_index("id")
+    smoothing_gdf.index = smoothing_gdf.index.astype(str)
+
+    return smooth_risk_values(risk_df, smoothing_gdf, input.smoothing_parameters)
+
+
+def finalize_risk_outputs(
+    risk_df: pd.DataFrame,
+    buildings_features: list[dict] | None,
+    input: PipelineParams,
+    requested: list[str] | None,
+    *,
+    output_columns: list[str],
+    candidate_cols: list[str],
+) -> "PfRiskResult":
+    """Classify, enrich, tessellate, and serialize the shared merge-results tail.
+
+    Identical for both PFR process variants. Order is significant and load-bearing,
+    not just conventional:
+
+    1. Classification MUST run first — ``build_enriched_features`` reads risk-class
+       labels out of *classified*, and the breaks below are computed from it too.
+    2. The Voronoi tessellation and HEALPix aggregation MUST both consume
+       ``source_buildings_gdf`` returned by ``build_enriched_features`` (already
+       carrying the classification columns), not the raw input buildings —
+       otherwise their cells would lack risk labels. They are two distinct,
+       independently requestable alternatives for a continuous/aggregated view
+       alongside ``risk_buildings`` — Voronoi via Delaunay-neighbour smoothed
+       per-building cells, HEALPix via a fixed geometric grid.
+
+    Callers must run smoothing (:func:`apply_optional_smoothing`) on *risk_df*
+    themselves before calling this, since that step still differs slightly per
+    variant (different building-feature lists feed the smoothing graph).
+
+    Args:
+        risk_df: PFR_WB/PFR_MA (optionally smoothed) indexed by building id.
+        buildings_features: GeoJSON building feature dicts, or ``None``/empty
+            when geometry is unavailable (``risk_buildings``/``voronoi_diagram``/
+            ``healpix_aggregation`` outputs are then empty).
+        input: Parsed pipeline parameters.
+        requested: ``exec_body["outputs"]`` keys, or ``None`` for "all outputs".
+        output_columns: Columns written onto each enriched building feature.
+        candidate_cols: Numeric columns eligible for aggregation outputs.
+    """
+    classified: ClassificationResult = run_classification_pipeline(
+        risk_df, input.n_classification_iterations
+    )
+
+    want_risk_buildings = requested is None or "risk_buildings" in requested
+    want_voronoi = requested is None or "voronoi_diagram" in requested
+    want_healpix = requested is None or "healpix_aggregation" in requested
+    want_breaks_wb = requested is None or "classification_breaks_wb" in requested
+    want_breaks_ma = requested is None or "classification_breaks_ma" in requested
+
+    enriched_features: list[dict] = []
+    source_buildings_gdf = None
+    if want_risk_buildings or want_voronoi or want_healpix:
+        if buildings_features:
+            enriched_features, source_buildings_gdf = build_enriched_features(
+                buildings_features, classified, input,
+                output_columns, candidate_cols,
+                _INPUT_BUILDING_OUTPUT_COLUMNS,
+            )
+        else:
+            logger.warning(
+                "finalize_risk_outputs: buildings geometry unavailable — "
+                "risk_buildings, voronoi_diagram, and healpix_aggregation "
+                "will be empty"
+            )
+
+    risk_buildings = (
+        {"type": "FeatureCollection", "features": enriched_features}
+        if want_risk_buildings else None
+    )
+
+    voronoi_diagram_fc = None
+    blds_metric = None
+    if want_voronoi and source_buildings_gdf is not None:
+        blds_metric = project_crs_to_metric(source_buildings_gdf, input.target_crs)
+        thiessen_gdf = create_thiessen_polygons(blds_metric)
+        source_crs = (
+            str(source_buildings_gdf.crs) if source_buildings_gdf.crs else "EPSG:4326"
+        )
+        output_crs = input.target_crs or source_crs
+        voronoi_diagram_fc = json.loads(thiessen_gdf.to_crs(output_crs).to_json())
+
+    healpix_fc = None
+    if want_healpix and source_buildings_gdf is not None:
+        # Centroids must be computed on a metric CRS, else they are skewed —
+        # reuse blds_metric when voronoi already projected it.
+        healpix_input_gdf = (
+            blds_metric
+            if blds_metric is not None
+            else project_crs_to_metric(source_buildings_gdf, input.target_crs)
+        )
+        healpix_gdf = aggregate_to_healpix(
+            healpix_input_gdf,
+            depth=input.healpix_params.depth,
+            risk_columns=input.healpix_params.columns,
+            agg_func=input.healpix_params.agg_func,
+            min_buildings=input.healpix_params.min_buildings,
+        )
+        healpix_fc = json.loads(healpix_gdf.to_json())
+
+    decimal_prec = input.output_settings.decimal_precision
+    classification_breaks_wb = (
+        [
+            cast(float, serialize_output_value(v, decimal_prec))
+            for v in classified.breaks_well_being
+        ]
+        if want_breaks_wb else None
+    )
+    classification_breaks_ma = (
+        [
+            cast(float, serialize_output_value(v, decimal_prec))
+            for v in classified.breaks_mobility_accessibility
+        ]
+        if want_breaks_ma else None
+    )
+
+    return PfRiskResult(
+        risk_buildings=risk_buildings,
+        voronoi_diagram=voronoi_diagram_fc,
+        healpix_aggregation=healpix_fc,
+        classification_breaks_wb=classification_breaks_wb,
+        classification_breaks_ma=classification_breaks_ma,
+        validation_report=None,
+    )
 
 
 def _build_pfr_schema_registry() -> Registry:
@@ -277,6 +448,7 @@ class BasePfRProcess:
             units["features"],
             cb,
             expand_boundary_by_meters(cb, _HAZARD_BUFFER_HALO_M),
+            features_crs=inputs.get("target_crs"),
         )
         inputs["buildings_local"] = {"type": "FeatureCollection", "features": local_features}
         logger.info(
@@ -336,6 +508,20 @@ class BasePfRProcess:
                     "late_validate: '%s' OK (%d features)",
                     layer_name, len(fc.get("features", [])),
                 )
+        for name in (
+            "buildings", "streets", "flood_layers", "statistical_units",
+            "buildings_local",
+        ):
+            fc = inputs.get(name)
+            if fc is not None and not fc.get("features"):
+                reason = (
+                    " Check calculation_boundary, building coordinates and CRS alignment."
+                    if name == "buildings_local"
+                    else " Check the source data and spatial filters."
+                )
+                raise ValueError(
+                    f"Input '{name}' has no features after validation.{reason}"
+                )
         logger.info("late_validate: all inputs valid")
         return True
 
@@ -393,6 +579,10 @@ class PfRiskResult(BaseProcessResult):
             "application/geo+json": "voronoi_diagram_to_json",
             "application/flatgeobuf": "voronoi_diagram_to_fgb",
         },
+        "healpix_aggregation": {
+            "application/geo+json": "healpix_aggregation_to_json",
+            "application/flatgeobuf": "healpix_aggregation_to_fgb",
+        },
         "classification_breaks_wb": {
             "application/json": "classification_breaks_wb_to_json",
         },
@@ -431,6 +621,18 @@ class PfRiskResult(BaseProcessResult):
         )["voronoi_diagram"]
         return self._fc_to_fgb(fc)
 
+    def healpix_aggregation_to_json(self) -> bytes:
+        result = self.model_dump(
+            mode="json", include={"healpix_aggregation"}
+        )["healpix_aggregation"]
+        return orjson.dumps(result)
+
+    def healpix_aggregation_to_fgb(self) -> bytes:
+        fc = self.model_dump(
+            mode="json", include={"healpix_aggregation"}
+        )["healpix_aggregation"]
+        return self._fc_to_fgb(fc)
+
     def classification_breaks_wb_to_json(self) -> bytes:
         result = self.model_dump(
             mode="json", include={"classification_breaks_wb"}
@@ -445,6 +647,7 @@ class PfRiskResult(BaseProcessResult):
 
     risk_buildings: dict | None = None
     voronoi_diagram: dict | None = None
+    healpix_aggregation: dict | None = None
     classification_breaks_wb: list[float] | None = None
     classification_breaks_ma: list[float] | None = None
     validation_report: dict | None = None

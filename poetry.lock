@@ -1077,14 +1077,14 @@ devel = ["colorama", "json-spec", "jsonschema", "pylint", "pytest", "pytest-benc
 
 [[package]]
 name = "fastprocesses"
-version = "0.24.0rc3"
+version = "0.24.0rc5"
 description = "A library to create a FastAPI-based  OGC API Processes wrapper around existing projects."
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "fastprocesses-0.24.0rc3-py3-none-any.whl", hash = "sha256:d6250ac99eba6cc4d059598f42e97dcaa8e95b8a929d9781e38231cb56417f1e"},
-    {file = "fastprocesses-0.24.0rc3.tar.gz", hash = "sha256:84d17e362ec60f83baf4787b432ffb4a303accff48b44d1178ef8112c43a4d9d"},
+    {file = "fastprocesses-0.24.0rc5-py3-none-any.whl", hash = "sha256:6ae31e0f791d93a20c0eb0eab2ed9da23ba41c68106fb81a4f0349e78e7b6c39"},
+    {file = "fastprocesses-0.24.0rc5.tar.gz", hash = "sha256:9395a84f99b30f79450f271fa04b5414138aeb5d08d0ff8fb6f42e7939b80cfe"},
 ]
 
 [package.dependencies]
@@ -5415,4 +5415,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "fb3ffb324fea42db438c6fa0497fef2dc78ca43fcb651042a3880f3b687b06b1"
+content-hash = "52a7678438d97339119c48ecd7589d26fb1eb2f34c148d2c0e3ccbbf394e2856"

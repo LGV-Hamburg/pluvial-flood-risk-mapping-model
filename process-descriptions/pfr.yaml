@@ -323,6 +323,34 @@ inputs:
           description: Exponent c applied to H.
     minOccurs: 0
     maxOccurs: 1
+  smoothing_parameters:
+    title: "Smoothing Parameters (optional)"
+    description: >-
+      Optional Delaunay-neighbour smoothing of pluvial flood risk values
+      before classification (Step 5.5). Disabled by default.
+    schema:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          default: false
+          description: >-
+            Enable Delaunay-neighbour risk smoothing before classification.
+        iterations:
+          type: integer
+          minimum: 0
+          maximum: 20
+          default: 1
+          description: Number of smoothing passes to apply when enabled.
+        max_distance_m:
+          type: number
+          exclusiveMinimum: 0.0
+          default: 100.0
+          description: >-
+            Maximum distance [m] between Delaunay-triangulation neighbours
+            for a pair to contribute to each other's smoothed value.
+    minOccurs: 0
+    maxOccurs: 1
   target_crs:
     title: "Target CRS (optional)"
     description: >-
@@ -375,6 +403,51 @@ inputs:
           description: >-
             Number of decimal places for floating-point outputs. null disables
             rounding.
+    minOccurs: 0
+    maxOccurs: 1
+  healpix_params:
+    title: "HEALPix Aggregation Parameters (optional)"
+    description: >-
+      Controls for the healpix_aggregation output: aggregates building-level
+      risk/hazard columns into HEALPix grid cells. An alternative to
+      voronoi_diagram for a continuous, cartographically stable view — the
+      grid is independent of building geometry, unlike the Delaunay-neighbour
+      smoothed Voronoi cells.
+    schema:
+      type: object
+      properties:
+        depth:
+          type: integer
+          minimum: 1
+          maximum: 29
+          default: 15
+          description: HEALPix depth (nside = 2^depth). Higher values produce finer cells.
+        agg_func:
+          type: string
+          enum:
+            - mean
+            - max
+            - sum
+            - median
+          default: mean
+          description: Aggregation function applied to risk columns.
+        min_buildings:
+          type: integer
+          minimum: 1
+          default: 3
+          description: >-
+            Minimum number of buildings per HEALPix cell required for
+            inclusion (privacy filter).
+        columns:
+          anyOf:
+            - type: array
+              items:
+                type: string
+            - type: null
+          default: null
+          description: >-
+            Explicit list of columns to aggregate. null (default) auto-detects
+            the available risk/hazard columns.
     minOccurs: 0
     maxOccurs: 1
 
@@ -439,6 +512,23 @@ outputs:
       the corresponding building in risk_buildings. Useful for continuous
       choropleth mapping when building footprints are too small for direct
       visualisation at the target map scale.
+    schema:
+      oneOf:
+        - allOf:
+            - format: geojson-feature-collection
+            - "$ref": "https://geojson.org/schema/FeatureCollection.json"
+        - type: string
+          contentMediaType: application/flatgeobuf
+          contentEncoding: binary
+  healpix_aggregation:
+    title: "HEALPix Aggregation"
+    description: >-
+      GeoJSON FeatureCollection of HEALPix grid cells (EPSG:4326), each
+      carrying the aggregated risk/hazard columns and n_buildings for cells
+      meeting the min_buildings privacy filter (see healpix_params). An
+      alternative to voronoi_diagram: the grid is a fixed geometric
+      tessellation independent of building geometry, rather than a
+      Delaunay-neighbour smoothed per-building cell.
     schema:
       oneOf:
         - allOf:

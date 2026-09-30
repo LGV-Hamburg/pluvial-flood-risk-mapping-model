@@ -600,6 +600,54 @@ class TestMergeResultsIntegration:
         assert len(merged_result.classification_breaks_wb) >= 1
         assert len(merged_result.classification_breaks_ma) >= 1
 
+    def test_returns_healpix_aggregation(self, merged_result) -> None:
+        assert merged_result.healpix_aggregation["type"] == "FeatureCollection"
+
+    def test_healpix_aggregation_populated_with_coarse_depth(
+        self,
+        process: PluvialFloodRiskProcess,
+        exec_body: dict,
+    ) -> None:
+        """A coarse depth + min_buildings=1 groups all 3 nearby buildings
+
+        into at least one populated HEALPix cell, proving the aggregation is
+        wired through with real input, not just structurally present.
+        """
+        body = copy.deepcopy(exec_body)
+        body["inputs"]["healpix_params"] = {"depth": 5, "min_buildings": 1}
+        results = {
+            "vulnerability_pipeline": process.vulnerability_pipeline(body),
+            "exposure_pipeline": process.exposure_pipeline(body),
+            "hazard_wb_pipeline": process.hazard_wb_pipeline(body),
+            "hazard_ma_pipeline": process.hazard_ma_pipeline(body),
+        }
+        merged = process.merge_results(results, body)
+        features = merged.healpix_aggregation["features"]
+        assert len(features) >= 1
+        total_buildings = sum(f["properties"]["n_buildings"] for f in features)
+        assert total_buildings == 3
+        for feature in features:
+            props = feature["properties"]
+            assert PLUVIAL_FLOOD_RISK_WELL_BEING in props
+            assert PLUVIAL_FLOOD_RISK_MOBILITY_ACCESSIBILITY in props
+
+    def test_healpix_aggregation_omitted_when_not_requested(
+        self,
+        process: PluvialFloodRiskProcess,
+        exec_body: dict,
+    ) -> None:
+        body = copy.deepcopy(exec_body)
+        body["outputs"] = {"risk_buildings": {}}
+        results = {
+            "vulnerability_pipeline": process.vulnerability_pipeline(body),
+            "exposure_pipeline": process.exposure_pipeline(body),
+            "hazard_wb_pipeline": process.hazard_wb_pipeline(body),
+            "hazard_ma_pipeline": process.hazard_ma_pipeline(body),
+        }
+        merged = process.merge_results(results, body)
+        assert merged.healpix_aggregation is None
+        assert merged.risk_buildings is not None
+
 
 # ---------------------------------------------------------------------------
 # 6. exposure_pipeline — statistical_units join mode
