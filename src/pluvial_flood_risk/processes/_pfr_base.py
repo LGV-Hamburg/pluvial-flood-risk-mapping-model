@@ -330,7 +330,12 @@ class BasePfRProcess:
             if isinstance(inputs.get(key), dict) and "href" in inputs[key]
         ]
         cb = inputs.get("calculation_boundary")
+        
         if references:
+
+            if job_progress_callback:
+                job_progress_callback(0, "Starting download of remote inputs: %s" % ", ".join(references))
+
             self._download_references(inputs, references, cb)
 
         if settings.drop_invalid_input_features:
