@@ -178,3 +178,6 @@ scratch/*
 !scratch/arcpy*
 !scratch/*.md
 !scratch/pfr_example-*.sh
+
+# misc
+graphify-out/cache/
