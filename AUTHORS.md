@@ -1,6 +1,3 @@
-# Authors
-Stefan Schuhart, stefan.schuhart@gv.hamburg.de
-
 # Authors and contributors
 
 ## Algorithm and research
