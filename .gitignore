@@ -179,5 +179,6 @@ scratch/*
 !scratch/*.md
 !scratch/pfr_example-*.sh
 
-# misc
+# graphify
 graphify-out/cache/
+graphify-out/.chunk*

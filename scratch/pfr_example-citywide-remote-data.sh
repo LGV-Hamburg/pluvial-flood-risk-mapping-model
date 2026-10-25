@@ -14,16 +14,18 @@ DATA_DIR="/home/python-dev/code/python/flood-risk-mapping-model/data/hamburg"
 # bbox=9.8802%2C53.4836%2C10.1072%2C53.6186
 # 20x20km
 # bbox=9.8423%2C53.4611%2C10.1451%2C53.6411
+# 30x30km
+# bbox=9.7662%2C53.4160%2C10.2212%2C53.6862
 
-API_URL="${API_URL:-http://localhost:8000/processes/pluvial-flood-risk-citywide/execution}"
-# API_URL="${API_URL:-https://ump-prod.germanywestcentral.cloudapp.azure.com/v1.0/processes/fair2adapt:pluvial-flood-risk-citywide/execution}"
+# API_URL="${API_URL:-http://localhost:8000/processes/pluvial-flood-risk-citywide/execution}"
+API_URL="${API_URL:-https://ump-prod.germanywestcentral.cloudapp.azure.com/v1.0/processes/fair2adapt:pluvial-flood-risk-citywide/execution}"
 
 # OGC API Features items endpoints for the three remote inputs.
 # The /items suffix is required by the process (normative OGC API Features path).
 # streets: nutzung=Fahrbahn filters to road surfaces only; f=json requests GeoJSON.
-BUILDINGS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/buildings_footprint/collections/buildings/items?f=json&filter=floors_above_ground%20>%200&bbox=9.8802%2C53.4836%2C10.1072%2C53.6187&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
-STREETS_URL="https://api.hamburg.de/datasets/v1/feinkartierung_strasse/collections/strassenflaechen/items?f=json&nutzung=Fahrbahn&bbox=9.8802%2C53.4836%2C10.1072%2C53.6187&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
-FLOOD_LAYERS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/flood_levels/collections/sri7/items?f=json&bbox=9.8802%2C53.4836%2C10.1072%2C53.6187&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
+BUILDINGS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/buildings_footprint/collections/buildings/items?f=json&filter=floors_above_ground%20>%200&bbox=9.7662%2C53.4160%2C10.2212%2C53.6862&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
+STREETS_URL="https://api.hamburg.de/datasets/v1/feinkartierung_strasse/collections/strassenflaechen/items?f=json&nutzung=Fahrbahn&bbox=9.7662%2C53.4160%2C10.2212%2C53.6862&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
+FLOOD_LAYERS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/flood_levels/collections/sri7/items?f=json&bbox=9.7662%2C53.4160%2C10.2212%2C53.6862&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required but not installed." >&2
@@ -53,7 +55,7 @@ generate_payload() {
                 statistical_units: $statistical_units[0],
                 target_crs: "http://www.opengis.net/def/crs/EPSG/0/25832",
                 hazard_parameters: {
-                    buffer_building_m: 2,
+                    buffer_building_m: 2.1,
                     buffer_zone1_m: 5,
                     buffer_zone2_m: 15,
                     buffer_zone3_m: 30,

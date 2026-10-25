@@ -4,15 +4,15 @@ set -euo pipefail
 
 DATA_DIR="/home/python-dev/code/python/flood-risk-mapping-model/data/hamburg"
 
-# API_URL="${API_URL:-http://localhost:8000/v1.0/processes/fair2adapt:pluvial-flood-risk-regional/execution}"
-API_URL="${API_URL:-https://ump-prod.germanywestcentral.cloudapp.azure.com/processes/fair2adapt:pluvial-flood-risk-regional/execution}"
+# API_URL="${API_URL:-http://localhost:8000/processes/pluvial-flood-risk-regional/execution}"
+API_URL="${API_URL:-https://ump-prod.germanywestcentral.cloudapp.azure.com/v1.0/processes/fair2adapt:pluvial-flood-risk-regional/execution}"
 
 # OGC API Features items endpoints for the three remote inputs.
 # The /items suffix is required by the process (normative OGC API Features path).
 # streets: nutzung=Fahrbahn filters to road surfaces only; f=json requests GeoJSON.
-BUILDINGS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/buildings_footprint/collections/buildings/items?f=json&filter=floors_above_ground%20>%200"
-STREETS_URL="https://api.hamburg.de/datasets/v1/feinkartierung_strasse/collections/strassenflaechen/items?f=json&nutzung=Fahrbahn"
-FLOOD_LAYERS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/flood_levels/collections/sri7/items?f=json&"
+BUILDINGS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/buildings_footprint/collections/buildings/items?f=json&filter=floors_above_ground%20>%200&bbox=9.6300%2C53.3900%2C10.3300%2C53.7500&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
+STREETS_URL="https://api.hamburg.de/datasets/v1/feinkartierung_strasse/collections/strassenflaechen/items?f=json&nutzung=Fahrbahn&bbox=9.6300%2C53.3900%2C10.3300%2C53.7500&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
+FLOOD_LAYERS_URL="https://geodata.germanywestcentral.cloudapp.azure.com/flood_levels/collections/sri7/items?f=json&bbox=9.6300%2C53.3900%2C10.3300%2C53.7500&crs=http://www.opengis.net/def/crs/EPSG/0/25832"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required but not installed." >&2
@@ -39,22 +39,22 @@ generate_payload() {
                     href: $flood_layers_url,
                     type: "application/geo+json"
                 },
-                statistical_units: $statistical_units[0],
                 target_crs: "http://www.opengis.net/def/crs/EPSG/0/25832",
                 vulnerability_parameters: {
                     sensitivity_weights: {
-                        children_under_10: 0.501,
-                        elderly_singles_over_65: 0.499
+                        children_under_10: 0.3,
+                        elderly_singles_over_65: 0.7,
+                        single_parents: 0
                     }
                 },
                 calculation_boundary: {
                     type: "Polygon",
                     coordinates: [[
-                        [10.04800, 53.56350],
-                        [10.08800, 53.56350],
-                        [10.08800, 53.58050],
-                        [10.04800, 53.58050],
-                        [10.04800, 53.56350]
+                        [10.04800, 53.56351],
+                        [10.08800, 53.56351],
+                        [10.08800, 53.58051],
+                        [10.04800, 53.58051],
+                        [10.04800, 53.56351]
                     ]]
                 }
             },

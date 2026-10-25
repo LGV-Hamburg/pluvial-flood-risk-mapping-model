@@ -64,6 +64,7 @@
     - [Auflösungsreihenfolge (`PipelineParams.target_crs`)](#auflösungsreihenfolge-pipelineparamstarget_crs)
     - [Implementierung](#implementierung)
     - [OGC API: `target_crs` als Parameter](#ogc-api-target_crs-als-parameter)
+  - [Plan: Single working CRS (remove WGS84 round trip)](#plan-single-working-crs-remove-wgs84-round-trip)
   - [Architekturentscheidung: Kein volles Hexagonal-Muster](#architekturentscheidung-kein-volles-hexagonal-muster)
   - [Code-Qualitäts-Richtlinien](#code-qualitäts-richtlinien)
     - [Lesbarkeit & numpy/pandas-Stil](#lesbarkeit--numpypandas-stil)
@@ -666,6 +667,64 @@ Im `params`-Objekt der Prozessbeschreibung ist `target_crs` als optionaler Strin
 - **Großbritannien:** `EPSG:27700` (British National Grid)
 - **Nordamerika (NYC):** `EPSG:2263` (NY State Plane)
 - **Unbekanntes Gebiet / WGS84-Input:** weglassen (Auto-UTM)
+
+---
+
+## Plan: Single working CRS (remove WGS84 round trip)
+
+**Problem.** Remote layers are requested in `target_crs` (e.g. EPSG:25832), then reprojected to WGS84 in the downloader (`_get_json`, `decode_flatgeobuf_bytes`), then parsed with `target_crs` as source hint. `convert_geojson_to_gdf` notices the coordinates look geographic, falls back to EPSG:4326 and logs a misleading warning; `project_crs_to_metric` then projects back to `target_crs`. Results are correct, but:
+
+- local → WGS84 → local round trip per feature (per-feature Python loop, CPU cost on 300k+ buildings),
+- a WARNING per parse call per job, pointing at a non-problem,
+- correctness depends on a coordinate-range heuristic instead of a declared CRS.
+
+**Principle.** One explicit *working CRS* for all feature layers of a job:
+
+| Input | Source CRS | Working CRS |
+|-------|-----------|-------------|
+| URL reference (GeoJSON / FlatGeobuf) | `Content-Crs` header or embedded FGB CRS | `target_crs`, else EPSG:4326 |
+| Inline FeatureCollection | `target_crs`, else EPSG:4326 | same (no-op) |
+| `calculation_boundary` | always EPSG:4326 | stays WGS84; filters reproject the boundary, never the data |
+
+Data is reprojected at most once (at download, and only when the server's CRS differs from the working CRS). Since we request `crs=<target_crs>`, the common case is a no-op.
+
+**Steps**
+
+1. **Downloader normalises to the working CRS, not WGS84** (`io/remote.py`)
+   - Add `target_crs: str | None` to `fetch_references_cached` → shim → `fetch_all_references` → `_fetch_reference_async` → `_get_json` / `decode_flatgeobuf_bytes`. Being a cached-function argument, it is part of the joblib cache key automatically.
+   - `_get_json`: skip reprojection when `Content-Crs` equals the working CRS; otherwise reproject vectorised (`gpd.GeoSeries.to_crs` over all page geometries) instead of the per-feature `shapely.ops.transform` loop.
+   - Keep the existing errors: invalid `Content-Crs` → `ValueError`; missing header with non-lon/lat coordinates → `ValueError`.
+   - `decode_flatgeobuf_bytes`: `to_crs(working_crs)` instead of `to_crs("EPSG:4326")`.
+   - → verify: `tests/test_remote.py` cases for (a) header = target → coordinates untouched, (b) header ≠ target → reprojected, (c) no header + WGS84 + `target_crs` → reprojected to target, (d) FGB with embedded CRS.
+
+2. **Request the working CRS for every GeoJSON reference** (`_pfr_base._inject_crs_params`)
+   - Inject `crs=` for `buildings` as well (currently only streets/flood_layers) and independent of `calculation_boundary` presence. `bbox-crs=CRS84` only where a bbox is injected.
+   - → verify: unit test on the rewritten hrefs.
+
+3. **Make the CRS contract explicit in parsing** (`spatial_utils.py`)
+   - `convert_geojson_to_gdf(features, source_crs)`: remove the geographic-looking fallback. Replace with a fail-fast check: declared CRS projected but coordinates within lon/lat range → `ValueError("Input looks like WGS84 but target_crs=… was declared; inline data must be supplied in target_crs")`. This turns a silent guess into a clear job failure for genuinely mislabelled inline data.
+   - `filter_features_to_boundary` / `filter_features_to_intersecting_units`: use the passed `features_crs` directly; drop the first-geometry CRS detection.
+   - → verify: `tests/test_spatial_utils.py` — projected data + matching CRS passes; WGS84 data + projected CRS raises.
+
+4. **Call sites unchanged in shape.** All pipeline calls already pass `target_crs` (regional, citywide, smoothing, serialization, prefilter). With steps 1–3 that argument is now *true* for every layer.
+   - → verify: grep that no `convert_geojson_to_gdf(` call omits the CRS argument except where `target_crs is None` is intended.
+
+5. **Docs / process description**
+   - Document in `process-descriptions/pfr*.yaml`: `target_crs` = calculation/output CRS **and** CRS of inline geodata; URL inputs declare theirs via `Content-Crs`; `calculation_boundary` is WGS84.
+   - Update the docstring of `convert_geojson_to_gdf` accordingly.
+
+6. **Tests (end-to-end through public hooks)**
+   - Remote buildings in EPSG:25832 + inline units in EPSG:25832 + `target_crs=EPSG:25832` → `buildings_local` non-empty, exposure results equal the WGS84 baseline, **no** reprojection performed (assert coordinates unchanged).
+   - Same with server answering in WGS84 → reprojected once, same results.
+   - Inline WGS84 + projected `target_crs` → job fails in `late_validate`/parse with the clear message.
+   - `target_crs` omitted → working CRS WGS84, auto-UTM path unchanged.
+   - → verify: `pytest tests/ -m 'not e2e'` green; worker log of `scratch/pfr_example-regional-remote-data.sh` shows no "coordinates look geographic" warning.
+
+**Behaviour changes / risks**
+
+- Inline WGS84 data sent together with a projected `target_crs` currently works by accident (heuristic); after step 3 it fails with a clear error. Breaking for such clients — intended, matches the agreed contract.
+- Downloaded data is no longer guaranteed to be WGS84 internally; any code assuming WGS84 features (beyond `calculation_boundary`) must take the working CRS. Known spots: the two feature filters (step 3) and `PfRiskResult._fc_to_fgb` (hard-codes EPSG:4326 for output — check output CRS separately).
+- Dev cache (`PFR_DEV_CACHE_DIR`) entries are invalidated once by the new argument.
 
 ---
 
